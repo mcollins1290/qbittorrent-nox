@@ -210,8 +210,8 @@ custom_flags_set() {
 	CC=arm-linux-gnueabihf-gcc
 	CXX=arm-linux-gnueabihf-g++
 
-	CXXFLAGS="-std=${standard} -mcpu=cortex-a72 -mfloat-abi=hard -mfpu=neon-fp-armv8 -mtune=cortex-a72 -I${include_dir}"
-	CPPFLAGS="--static -static -mcpu=cortex-a72 -mfloat-abi=hard -mfpu=neon-fp-armv8 -mtune=cortex-a72 -I${include_dir}"
+	CXXFLAGS="-std=${standard} -mcpu=cortex-a72 -mfloat-abi=hard -mfpu=neon-vfpv4 -mtune=cortex-a72 -I${include_dir}"
+	CPPFLAGS="--static -static -mcpu=cortex-a72 -mfloat-abi=hard -mfpu=neon-vfpv4 -mtune=cortex-a72 -I${include_dir}"
 	LDFLAGS="--static -static -Wl,--no-as-needed -L${lib_dir} -lpthread -pthread"
 }
 custom_flags_unset() {
