@@ -1,0 +1,10 @@
+--- /build-rpi/source/static/qbittorrent/build/lib/pkgconfig/libtorrent-rasterbar.pc	2023-01-15 10:46:00.326250088 -0500
++++ ./libtorrent-rasterbar_fix.pc	2023-01-15 11:16:40.832528632 -0500
+@@ -2,6 +2,6 @@
+ Description: libtorrent is an open source C++ library implementing the BitTorrent protocol 
+ URL: https://libtorrent.org 
+ Version: 2.0.8 
+-Libs:  -L"/build-rpi/source/static/qbittorrent/build/lib"  -ltorrent-rasterbar -lcrypto  -ldl  -lssl 
++Libs:  -L"/build-rpi/source/static/qbittorrent/build/lib"  -ltorrent-rasterbar -ltry_signal -lcrypto  -ldl  -lssl
+ Libs.private:  -L"/build-rpi/source/static/qbittorrent/build/lib"  -llibboost_system.a  -llibtry_signal.a 
+ Cflags:  -DTORRENT_USE_LIBCRYPTO  -DTORRENT_USE_OPENSSL  -DTORRENT_SSL_PEERS  -DTORRENT_USE_I2P=1  -DBOOST_ALL_NO_LIB  -DBOOST_ASIO_ENABLE_CANCELIO  -DBOOST_ASIO_HAS_STD_CHRONO  -DBOOST_ASIO_NO_DEPRECATED  -DBOOST_MULTI_INDEX_DISABLE_SERIALIZATION  -DBOOST_SYSTEM_NO_DEPRECATED  -DBOOST_SYSTEM_STATIC_LINK=1  -I"/build-rpi/source/static/qbittorrent/build/include"  -I"/build-rpi/source/static/qbittorrent/build/boost" 
