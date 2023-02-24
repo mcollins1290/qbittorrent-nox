@@ -29,13 +29,13 @@ set_default_values() {
 	#
 	qb_python_version="3"
 	#
-	standard="c++17"
+	standard="17" && cpp_standard="c${standard}" && cxx_standard="c++${standard}"
 	#
-	qb_modules=("all" "linux_headers" "zlib" "openssl" "boost" "libtorrent" "qtbase" "qttools" "qbittorrent")
+	qb_modules=("all" "linux_headers" "glibc" "zlib" "iconv" "icu" "openssl" "boost" "libtorrent" "qtbase" "qttools" "qbittorrent")
 	#
 	delete=()
 	#
-	qb_required_pkgs=("build-essential" "curl" "pkg-config" "automake" "libtool" "git" "perl" "python${qb_python_version}" "python${qb_python_version}-dev" "python${qb_python_version}-numpy")
+	qb_required_pkgs=("build-essential" "bison" "curl" "pkg-config" "automake" "libtool" "git" "perl" "python${qb_python_version}" "python${qb_python_version}-dev" "python${qb_python_version}-numpy")
 	#
 	qb_working_dir="$(printf "%s" "$(pwd <(dirname "${0}"))")"
 	qb_working_dir_short="${qb_working_dir/$HOME/\~}"
@@ -201,18 +201,29 @@ set_build_directory() {
 	PATH="${qb_install_dir}/bin:${HOME}/bin${PATH:+:${PATH}}"
 	LD_LIBRARY_PATH="-L${lib_dir}"
 	PKG_CONFIG_PATH="-L${lib_dir}/pkgconfig"
+	# Compiler prefix
+	COMPILER_PREFIX="arm-linux-gnueabihf"
 }
 #######################################################################################################################################################
 # Set Compiler Flags
 #######################################################################################################################################################
 custom_flags_set() {
-	CHOST=arm-linux-gnueabihf
-	CC=arm-linux-gnueabihf-gcc
-	CXX=arm-linux-gnueabihf-g++
+	CHOST="${COMPILER_PREFIX}"
+	CC="${COMPILER_PREFIX}-gcc"
+	CXX="${COMPILER_PREFIX}-g++"
 
-	CXXFLAGS="-std=${standard} -march=armv8-a -mfpu=neon-fp-armv8 -mcpu=cortex-a72 -mfloat-abi=hard -mtune=cortex-a72 -I${include_dir}"
-	CPPFLAGS="--static -static -march=armv8-a -mfpu=neon-fp-armv8 -mcpu=cortex-a72 -mfloat-abi=hard -mtune=cortex-a72 -I${include_dir}"
+	CXXFLAGS="-std=${cxx_standard} --static -static -mcpu=cortex-a72 -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard -I${include_dir}"
+	CPPFLAGS="--static -static -mcpu=cortex-a72 -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard -I${include_dir}"
 	LDFLAGS="--static -static -Wl,--no-as-needed -L${lib_dir} -lpthread -pthread"
+}
+custom_flags_reset() {
+	CHOST="${COMPILER_PREFIX}"
+        CC="${COMPILER_PREFIX}-gcc"
+        CXX="${COMPILER_PREFIX}-g++"
+
+        CXXFLAGS="-w -std=${cxx_standard}"
+        CPPFLAGS="-w"
+        LDFLAGS=""
 }
 custom_flags_unset() {
         unset CHOST
@@ -231,8 +242,15 @@ set_module_urls() {
 	linux_headers_github_url="https://github.com/raspberrypi/linux"
 	linux_headers_github_tag="$(git_git ls-remote --symref ${linux_headers_github_url} HEAD | awk -F'[/\t]' 'NR == 1 {print $3}')"
 	#
+	glibc_url="https://ftp.gnu.org/gnu/libc/glibc-2.31.tar.gz"
+	#
 	zlib_github_tag="$(git_git ls-remote -q -t --refs https://github.com/madler/zlib.git | awk '{sub("refs/tags/", "");sub("(.*)(-[^0-9].*)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n 1)"
 	zlib_url="https://github.com/madler/zlib/archive/${zlib_github_tag}.tar.gz"
+	#
+	iconv_url="https://ftp.gnu.org/gnu/libiconv/$(grep -Eo 'libiconv-([0-9]{1,3}[.]?)([0-9]{1,3}[.]?)([0-9]{1,3}?)\.tar.gz' <(curl https://ftp.gnu.org/gnu/libiconv/) | sort -V | tail -1)"
+	#
+	icu_github_tag="$(git_git ls-remote -q -t --refs https://github.com/unicode-org/icu.git | awk '/\/release-/{sub("refs/tags/release-", "");sub("(.*)(-[^0-9].*)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n 1)"
+	icu_url="https://github.com/unicode-org/icu/releases/download/release-${icu_github_tag}/icu4c-${icu_github_tag/-/_}-src.tgz"
 	#
 	openssl_github_tag="$(git_git ls-remote -q -t --refs https://github.com/openssl/openssl.git | awk '/OpenSSL_1/{sub("refs/tags/", "");sub("(.*)(v6|rc|alpha|beta|-)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n1)"
 	openssl_url="https://github.com/openssl/openssl/archive/${openssl_github_tag}.tar.gz"
@@ -457,6 +475,20 @@ post_build() {
 	fi
 }
 #######################################################################################################################################################
+# static lib link fix: check for *.so and *.a versions of a lib in the $lib_dir and change the *.so link to point to the static lib e.g. libdl.a
+#######################################################################################################################################################
+_fix_static_links() {
+	log_name="$1"
+	mapfile -t library_list < <(find "${lib_dir}" -maxdepth 1 -exec bash -c 'basename "$0" ".${0##*.}"' {} \; | sort | uniq -d)
+	for file in "${library_list[@]}"; do
+		if [[ "$(readlink "${lib_dir}/${file}.so")" != "${file}.a" ]]; then
+			ln -fsn "${file}.a" "${lib_dir}/${file}.so"
+			echo "${lib_dir}${file}.so changed to point to ${file}.a" >> "${qb_install_dir}/logs/${log_name}-fix-static-links.log.txt"
+		fi
+	done
+	return
+}
+#######################################################################################################################################################
 # error functions
 #######################################################################################################################################################
 _error_tag() {
@@ -594,6 +626,37 @@ else
         application_skip
 fi
 #######################################################################################################################################################
+# glibc installation
+#######################################################################################################################################################
+application_name glibc
+
+if [[ "${!app_name_skip:-yes}" == 'no' || "${1}" == "${app_name}" ]]; then
+	#
+	if [[ ! -d "${qb_install_dir}/include" ]]; then
+        	echo -e "${tn}${clr} Warning${cend} This module depends on the linux_headers module. Use them together: ${clm}linux_headers glibc${cend}"
+        	echo
+	else
+		custom_flags_reset
+		download_file "${app_name}" "${!app_url}"
+		#
+		mkdir -p build
+		_cd "${app_dir}/build"
+		#
+		"${app_dir}/configure" --host=arm-linux-gnueabihf --prefix="${qb_install_dir}" --enable-static-nss --disable-nscd |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
+		make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/$app_name.log.txt"
+		#
+		post_build
+		#
+		make install |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+		#
+		_fix_static_links "${app_name}"
+		#
+		delete_function "${app_name}"
+	fi
+else
+	application_skip
+fi
+#######################################################################################################################################################
 # zlib installation
 #######################################################################################################################################################
 application_name zlib
@@ -608,6 +671,61 @@ if [[ "${!app_name_skip:-yes}" = 'no' || "${1}" = "${app_name}" ]]; then
 	post_build
 	#
 	make install |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	_fix_static_links "${app_name}"
+	#
+	delete_function "${app_name}"
+else
+	application_skip
+fi
+#######################################################################################################################################################
+# iconv installation
+#######################################################################################################################################################
+application_name iconv
+
+if [[ "${!app_name_skip:-yes}" == 'no' || "${1}" == "${app_name}" ]]; then
+	custom_flags_reset
+	download_file "${app_name}" "${!app_url}"
+	#
+	./configure --host=arm-linux-gnueabihf --prefix="${qb_install_dir}" --disable-shared --enable-static CXXFLAGS="${CXXFLAGS}" CPPFLAGS="${CPPFLAGS}" LDFLAGS="${LDFLAGS}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	make install |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	_fix_static_links "${app_name}"
+	#
+	post_build
+	#
+	delete_function "${app_name}"
+else
+	application_skip
+fi
+#######################################################################################################################################################
+# ICU installation
+#######################################################################################################################################################
+application_name icu
+
+if [[ "${!app_name_skip:-yes}" == 'no' || "${1}" == "${app_name}" ]]; then
+	custom_flags_reset
+	#
+	download_file "${app_name}" "${!app_url}" "/source"
+	#
+	mkdir -p "${qb_install_dir}/${app_name}/cross"
+	_cd "${qb_install_dir}/${app_name}/cross"
+	"${qb_install_dir}/${app_name}/source/runConfigureICU" Linux/gcc
+	make -j"$(nproc)"
+	_cd "${qb_install_dir}/${app_name}/source"
+	#
+	./configure --host=arm-linux-gnueabihf -with-cross-build="${qb_install_dir}/icu/cross" --prefix="${qb_install_dir}" --disable-shared --enable-static --disable-samples --disable-tests --with-data-packaging=static CXXFLAGS="${CXXFLAGS}" CPPFLAGS="${CPPFLAGS}" LDFLAGS="${LDFLAGS}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	post_build
+	#
+	make install |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	_fix_static_links "${app_name}"
 	#
 	delete_function "${app_name}"
 else
