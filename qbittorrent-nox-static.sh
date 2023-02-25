@@ -215,8 +215,8 @@ custom_flags_set() {
 	CC="${COMPILER_PREFIX}-gcc"
 	CXX="${COMPILER_PREFIX}-g++"
 
-	CXXFLAGS="-std=${cxx_standard} --static -static -mcpu=cortex-a72 -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard -I${include_dir}"
-	CPPFLAGS="--static -static -mcpu=cortex-a72 -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard -I${include_dir}"
+	CXXFLAGS="-std=${cxx_standard} --static -static -w -mcpu=cortex-a72 -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard -I${include_dir}"
+	CPPFLAGS="--static -static -w -mcpu=cortex-a72 -mtune=cortex-a72 -mfpu=neon-fp-armv8 -mfloat-abi=hard -I${include_dir}"
 	LDFLAGS="--static -static -Wl,--no-as-needed -L${lib_dir} -lpthread -pthread"
 }
 custom_flags_reset() {
@@ -615,6 +615,7 @@ fi
 ####
 
 echo "Continue..."
+s_timestamp=$(date +'%s')
 #######################################################################################################################################################
 # Functions part 3: Use some of our functions
 #######################################################################################################################################################
@@ -877,13 +878,13 @@ if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
 	#
 	if [[ ! -d "${qb_install_dir}/qt-host" ]]; then
 		#
-		# BUILD QT FOR HOST
+		# BUILD QT BASE FOR HOST
 		#
-		echo -e "${tn}${clc}Building Qt for Host${cend}"
+		echo -e "${tn}${clc}Building Qt Base for Host${cend}"
 		custom_flags_unset
 		#
 		cmake -Wno-dev -Wno-deprecated -G Ninja -B build-host \
-			-D CMAKE_VERBOSE_MAKEFILE=ON \
+			-D CMAKE_VERBOSE_MAKEFILE=OFF \
 			-D CMAKE_BUILD_TYPE="release" \
 			-D QT_FEATURE_optimize_full=on \
 			-D QT_FEATURE_gui=off \
@@ -900,14 +901,14 @@ if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
 		cmake --install build-host |& tee -a "${qb_install_dir}/logs/${app_name}-HOST.log.txt"
 	fi
 	#
-	# BUILD QT FOR RPI
+	# BUILD QT BASE FOR RPI
 	#
-	echo -e "${tn}${clc}Building Qt for RPi${cend}"
+	echo -e "${tn}${clc}Building Qt Base for RPi${cend}"
 	custom_flags_set
 	#
 	./configure -static -- -Wno-dev -Wno-deprecated -G Ninja -B build-rpi \
 		-D CMAKE_BUILD_TYPE="release" \
-		-D CMAKE_VERBOSE_MAKEFILE=on \
+		-D CMAKE_VERBOSE_MAKEFILE=OFF \
 		-D QT_HOST_PATH="${qb_install_dir}/qt-host" \
 		-D CMAKE_TOOLCHAIN_FILE="${AUX_DIR}/toolchain.cmake" \
 		-D QT_FEATURE_optimize_full=on -D QT_FEATURE_static=on -D QT_FEATURE_shared=off \
@@ -940,20 +941,52 @@ fi
 #######################################################################################################################################################
 application_name qttools
 #
-if [[ "${!app_name_skip:-yes}" = 'no' ]] || [[ "${1}" = "${app_name}" ]]; then
-	custom_flags_set
-	download_folder "${app_name}" "${!app_github_url}"
-	#
-	"${qb_install_dir}/qt5-host/bin/qmake" -set prefix "${qb_install_dir}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
-	#
-	"${qb_install_dir}/qt5-host/bin/qmake" QMAKE_CXXFLAGS="-static" QMAKE_LFLAGS="-static" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
-	make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
-	#
-	post_build
-	#
-	make install |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
-	#
-	delete_function "${app_name}"
+if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
+	if [[ ! -d "${qb_install_dir}/qt-host" ]]; then
+		echo -e "${tn} ${urc}${clr} Warning${cend} This module depends on the qtbase module. Use them together: ${clm}qtbase qttools${cend}"
+	else
+		#
+		download_file "${app_name}" "${!app_url}"
+		#
+		# BUILD QT TOOLS FOR HOST
+		#
+		custom_flags_unset
+		echo -e "${tn}${clc}Building Qt Tools for Host${cend}"
+		"${qb_install_dir}/qt-host/bin/qt-cmake" -Wno-dev -Wno-deprecated -G Ninja -B build-host \
+			-D CMAKE_VERBOSE_MAKEFILE=OFF \
+			-D CMAKE_BUILD_TYPE="release" \
+			-D CMAKE_CXX_STANDARD="${standard}" \
+			-D CMAKE_PREFIX_PATH="${qb_install_dir}/qt-host" \
+			-D CMAKE_INSTALL_PREFIX="${qb_install_dir}/qt-host" |& tee -a "${qb_install_dir}/logs/${app_name}-HOST.log.txt"
+		cmake --build build-host |& tee -a "${qb_install_dir}/logs/${app_name}-HOST.log.txt"
+		#
+		post_build
+		#
+		cmake --install build-host |& tee -a "${qb_install_dir}/logs/${app_name}-HOST.log.txt"
+		#
+                # BUILD QT TOOLS FOR RPi
+                #
+		custom_flags_set
+		echo -e "${tn}${clc}Building Qt Tools for RPi${cend}"
+		"${qb_install_dir}/bin/qt-cmake" -Wno-dev -Wno-deprecated -G Ninja -B build-rpi \
+			-D CMAKE_VERBOSE_MAKEFILE=OFF \
+			-D CMAKE_BUILD_TYPE="release" \
+			-D CMAKE_CXX_STANDARD="${standard}" \
+			-D CMAKE_PREFIX_PATH="${qb_install_dir}" \
+			-D CMAKE_CXX_FLAGS="${CXXFLAGS}" \
+			-D BUILD_SHARED_LIBS=OFF \
+			-D CMAKE_SKIP_RPATH=on -D CMAKE_SKIP_INSTALL_RPATH=on \
+			-D CMAKE_INSTALL_PREFIX="${qb_install_dir}" |& tee -a "${qb_install_dir}/logs/${app_name}-RPi.log.txt"
+		cmake --build build-rpi |& tee -a "${qb_install_dir}/logs/${app_name}-RPi.log.txt"
+		#
+		post_build
+		#
+		cmake --install build-rpi |& tee -a "${qb_install_dir}/logs/${app_name}-RPi.log.txt"
+		#
+		_fix_static_links "${app_name}"
+		#
+		delete_function "${app_name}"
+	fi
 else
 	application_skip
 fi
@@ -961,41 +994,50 @@ fi
 # qBittorrent installation
 #######################################################################################################################################################
 application_name qbittorrent
-#
-if [[ "${!app_name_skip:-yes}" = 'no' ]] || [[ "${1}" = "${app_name}" ]]; then
+
+if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
 	if [[ ! -d "${qb_install_dir}/boost" ]]; then
-		echo -e "${tn}${clr} Warning${cend} This module depends on the boost module. Use them together: ${clm}boost qbittorrent${cend}"
+		echo -e "${tn} ${urc}${clr} Warning${cend} This module depends on the boost module. Use them together: ${clm}boost qbittorrent${cend}"
 		echo
 	else
 		custom_flags_set
+		#
 		download_folder "${app_name}" "${!app_github_url}"
-		#
-		if [[ "${libtorrent_github_tag}" =~ ^(RC_2|v2) ]]; then
-			libtorrent_libs="-L${lib_dir} -l:libtorrent-rasterbar.a -l:libtry_signal.a"
-		else
-			libtorrent_libs="-L${lib_dir} -l:libtorrent-rasterbar.a"
-		fi
-		#
-		./bootstrap.sh |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
-		./configure --host=armv7l-linux-musleabihf --prefix="${qb_install_dir}" "${qb_debug}" --with-boost="${qb_install_dir}/boost" --with-boost-libdir="${lib_dir}" openssl_CFLAGS="${include_dir}" openssl_LIBS="${lib_dir}" --disable-gui CXXFLAGS="${CXXFLAGS} -I${qb_install_dir}/boost" CPPFLAGS="${CPPFLAGS}" LDFLAGS="${LDFLAGS} -l:libboost_system.a" openssl_CFLAGS="-I${include_dir}" openssl_LIBS="-L${lib_dir} -l:libcrypto.a -l:libssl.a" libtorrent_CFLAGS="-I${include_dir}" libtorrent_LIBS="${libtorrent_libs}" zlib_CFLAGS="-I${include_dir}" zlib_LIBS="-L${lib_dir} -l:libz.a" QT_QMAKE="${qb_install_dir}/qt5-host/bin" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
-		#
-		make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+		"${qb_install_dir}/bin/qt-cmake" -Wno-dev -Wno-deprecated -G Ninja -B build \
+			-D CMAKE_VERBOSE_MAKEFILE=ON \
+			-D CMAKE_BUILD_TYPE="release" \
+			-D QT6=ON \
+			-D CMAKE_CXX_STANDARD="${standard}" \
+			-D CMAKE_PREFIX_PATH="${qb_install_dir};${qb_install_dir}/boost" \
+			-D Boost_NO_BOOST_CMAKE=TRUE \
+			-D CMAKE_CXX_FLAGS="${CXXFLAGS}" \
+			-D GUI=OFF \
+			-D CMAKE_INSTALL_PREFIX="${qb_install_dir}" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+		cmake --build build |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
 		#
 		post_build
 		#
-		make install |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+		cmake --install build |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
 		#
-		armv7l-linux-musleabihf-strip "${qb_install_dir}/bin/qbittorrent-nox"
 		[[ -f "${qb_install_dir}/bin/qbittorrent-nox" ]] && cp -f "${qb_install_dir}/bin/qbittorrent-nox" "${qb_install_dir}/completed/qbittorrent-nox"
+		[[ -f "${qb_install_dir}/completed/qbittorrent-nox" ]] && "${COMPILER_PREFIX}-strip" "${qb_install_dir}/completed/qbittorrent-nox"
 		#
-		delete_function boost
-		delete_function "${app_name}" last
-		echo -e "${tn}${tb}${cg}Build completed successfully${tb}${cend}"
+		application_name boost && delete_function boost
+		application_name qbittorrent && delete_function "${app_name}" last
+		#
+		echo -e "${cg}Build completed successfully.${cend}"
 	fi
 else
 	application_skip last
 fi
 #######################################################################################################################################################
-# We are all done so now exit
+# We are all done so output duration and exit
 #######################################################################################################################################################
+f_timestamp=$(date +'%s')
+dur="$(($f_timestamp-$s_timestamp))"
+h=$(( dur / 3600 ))
+m=$(( ( dur / 60 ) % 60 ))
+s=$(( dur % 60 ))
+printf "Duration: %02d:%02d:%02d\n\n" $h $m $s
+
 exit
