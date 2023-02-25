@@ -23,15 +23,15 @@ cend="\e[0m"  # [c]olor[end]
 #######################################################################################################################################################
 set_default_values() {
 	#
-	libtorrent_version='1.2'
+	libtorrent_version="${libtorrent_version:-2.0}"
 	#
-	qt_version='5.15'
+	qt_target_version='6'
 	#
 	qb_python_version="3"
 	#
 	standard="17" && cpp_standard="c${standard}" && cxx_standard="c++${standard}"
 	#
-	qb_modules=("all" "linux_headers" "glibc" "zlib" "iconv" "icu" "openssl" "boost" "libtorrent" "qtbase" "qttools" "qbittorrent")
+	qb_modules=("all" "linux_headers" "glibc" "zlib" "iconv" "icu" "openssl" "boost" "libtorrent" "double_conversion" "qtbase" "qttools" "qbittorrent")
 	#
 	delete=()
 	#
@@ -201,6 +201,9 @@ set_build_directory() {
 	PATH="${qb_install_dir}/bin:${HOME}/bin${PATH:+:${PATH}}"
 	LD_LIBRARY_PATH="-L${lib_dir}"
 	PKG_CONFIG_PATH="-L${lib_dir}/pkgconfig"
+	#
+	## Define aux directory
+	AUX_DIR="${PWD}/aux"
 	# Compiler prefix
 	COMPILER_PREFIX="arm-linux-gnueabihf"
 }
@@ -252,19 +255,24 @@ set_module_urls() {
 	icu_github_tag="$(git_git ls-remote -q -t --refs https://github.com/unicode-org/icu.git | awk '/\/release-/{sub("refs/tags/release-", "");sub("(.*)(-[^0-9].*)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n 1)"
 	icu_url="https://github.com/unicode-org/icu/releases/download/release-${icu_github_tag}/icu4c-${icu_github_tag/-/_}-src.tgz"
 	#
-	openssl_github_tag="$(git_git ls-remote -q -t --refs https://github.com/openssl/openssl.git | awk '/OpenSSL_1/{sub("refs/tags/", "");sub("(.*)(v6|rc|alpha|beta|-)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n1)"
+	openssl_github_tag="$(git_git ls-remote -q -t --refs https://github.com/openssl/openssl.git | awk '/openssl/{sub("refs/tags/", "");sub("(.*)(v6|rc|alpha|beta)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n1)"
+	openssl_version="${openssl_github_tag#openssl-}"
 	openssl_url="https://github.com/openssl/openssl/archive/${openssl_github_tag}.tar.gz"
 	#
-	boost_version="$(git_git ls-remote -q -t --refs https://github.com/boostorg/boost.git | awk '{sub("refs/tags/boost-", "");sub("(.*)(rc|alpha|beta)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n1)"
+	boost_version="${boost_version:-$(git_git ls-remote -q -t --refs https://github.com/boostorg/boost.git | awk '{sub("refs/tags/boost-", "");sub("(.*)(rc|alpha|beta)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n1)}"
 	boost_github_tag="boost-${boost_version}"
 	boost_url="https://boostorg.jfrog.io/artifactory/main/release/${boost_version}/source/boost_${boost_version//./_}.tar.gz"
 	boost_url_status="$(curl_curl -so /dev/null --head --write-out '%{http_code}' "https://boostorg.jfrog.io/artifactory/main/release/${boost_version}/source/boost_${boost_version//./_}.tar.gz")"
 	boost_github_url="https://github.com/boostorg/boost.git"
 	#
-	qt_github_tag_list="$(git_git ls-remote -q -t --refs https://github.com/qt/qtbase.git | awk '{sub("refs/tags/", "");sub("(.*)(-[^0-9].*)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV)"
-	#
-	qtbase_github_tag="$(grep -Eom1 "v${qt_version}.([0-9]{1,2})" <<< "${qt_github_tag_list}")"
-	qtbase_github_url="https://github.com/qt/qtbase.git"
+	qt_github_tag_list="$(git_git ls-remote -q -t --refs https://github.com/qt/qtbase.git | awk '/v/{sub("refs/tags/", "");sub("(.*)(-a|-b|-r)", ""); print $2 }' | awk '!/^$/' | sort -rV)"
+	qt_version="$(grep -Em1 "v${qt_target_version}" <<< "${qt_github_tag_list}" | sed 's/-lts-lgpl//g')"
+	read -ra qt_version_short_array <<< "${qt_version//\./ }"
+	qt_version_short="${qt_version_short_array[0]/v/}.${qt_version_short_array[1]/v/}"
+	qtbase_github_tag="${qt_version}"
+	qttools_github_tag="${qt_version}"
+	qtbase_url="https://download.qt.io/official_releases/qt/${qt_version_short}/${qtbase_github_tag/v/}/submodules/qtbase-everywhere-src-${qtbase_github_tag/v/}.tar.xz"
+	qttools_url="https://download.qt.io/official_releases/qt/${qt_version_short}/${qttools_github_tag/v/}/submodules/qttools-everywhere-src-${qttools_github_tag/v/}.tar.xz"
 	#
 	qttools_github_tag="$(grep -Eom1 "v${qt_version}.([0-9]{1,2})" <<< "${qt_github_tag_list}")"
 	qttools_github_url="https://github.com/qt/qttools.git"
@@ -277,6 +285,10 @@ set_module_urls() {
 	qbittorrent_github_url="https://github.com/qbittorrent/qBittorrent.git"
 	qbittorrent_github_tag_default="$(git_git ls-remote -q -t --refs https://github.com/qbittorrent/qBittorrent.git | awk '{sub("refs/tags/", "");sub("(.*)(-[^0-9].*|rc|alpha|beta)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n1)"
 	qbittorrent_github_tag="${qbitorrent_github_tag:-$qbittorrent_github_tag_default}"
+	#
+	double_conversion_github_tag="$(git_git ls-remote -q -t --refs https://github.com/google/double-conversion.git | awk '/v/{sub("refs/tags/", "");sub("(.*)(v6|rc|alpha|beta)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n1)"
+	double_conversion_version="${double_conversion_github_tag}"
+	double_conversion_github_url="https://github.com/google/double-conversion.git"
 	#
 }
 #######################################################################################################################################################
@@ -585,7 +597,7 @@ openssl_pretty_version="${openssl_github_tag#OpenSSL_}" && openssl_pretty_versio
 
 printf "qBittorrent ${qbittorrent_github_tag#release-} will be built with the following libraries:\n"
 printf "\n"
-printf "Qt: ${qttools_github_tag#v}\n"
+printf "Qt: ${qt_version#v}\n"
 printf "Libtorrent: ${libtorrent_github_tag#v}\n"
 printf "Boost: ${boost_version#v}\n"
 printf "OpenSSL: ${openssl_pretty_version}\n"
@@ -642,7 +654,7 @@ if [[ "${!app_name_skip:-yes}" == 'no' || "${1}" == "${app_name}" ]]; then
 		mkdir -p build
 		_cd "${app_dir}/build"
 		#
-		"${app_dir}/configure" --host=arm-linux-gnueabihf --prefix="${qb_install_dir}" --enable-static-nss --disable-nscd |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
+		"${app_dir}/configure" --host="${COMPILER_PREFIX}" --prefix="${qb_install_dir}" --enable-static-nss --disable-nscd |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
 		make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/$app_name.log.txt"
 		#
 		post_build
@@ -687,7 +699,7 @@ if [[ "${!app_name_skip:-yes}" == 'no' || "${1}" == "${app_name}" ]]; then
 	custom_flags_reset
 	download_file "${app_name}" "${!app_url}"
 	#
-	./configure --host=arm-linux-gnueabihf --prefix="${qb_install_dir}" --disable-shared --enable-static CXXFLAGS="${CXXFLAGS}" CPPFLAGS="${CPPFLAGS}" LDFLAGS="${LDFLAGS}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
+	./configure --host="${COMPILER_PREFIX}" --prefix="${qb_install_dir}" --disable-shared --enable-static CXXFLAGS="${CXXFLAGS}" CPPFLAGS="${CPPFLAGS}" LDFLAGS="${LDFLAGS}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
 	#
 	make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
 	#
@@ -717,7 +729,7 @@ if [[ "${!app_name_skip:-yes}" == 'no' || "${1}" == "${app_name}" ]]; then
 	make -j"$(nproc)"
 	_cd "${qb_install_dir}/${app_name}/source"
 	#
-	./configure --host=arm-linux-gnueabihf -with-cross-build="${qb_install_dir}/icu/cross" --prefix="${qb_install_dir}" --disable-shared --enable-static --disable-samples --disable-tests --with-data-packaging=static CXXFLAGS="${CXXFLAGS}" CPPFLAGS="${CPPFLAGS}" LDFLAGS="${LDFLAGS}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
+	./configure --host="${COMPILER_PREFIX}" -with-cross-build="${qb_install_dir}/icu/cross" --prefix="${qb_install_dir}" --disable-shared --enable-static --disable-samples --disable-tests --with-data-packaging=static CXXFLAGS="${CXXFLAGS}" CPPFLAGS="${CPPFLAGS}" LDFLAGS="${LDFLAGS}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
 	#
 	make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
 	#
@@ -747,6 +759,8 @@ if [[ "${!app_name_skip:-yes}" = 'no' || "${1}" = "${app_name}" ]]; then
 	#
 	make install_sw |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
 	#
+	_fix_static_links "${app_name}"
+	#
 	delete_function "${app_name}"
 else
 	application_skip
@@ -772,7 +786,7 @@ if [[ "${!app_name_skip:-yes}" = 'no' ]] || [[ "${1}" = "${app_name}" ]]; then
 		download_folder "${app_name}" "${!app_github_url}"
 	fi
 	#
-	"${qb_install_dir}/boost/bootstrap.sh" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
+	"${qb_install_dir}/boost/bootstrap.sh"|& tee "${qb_install_dir}/logs/${app_name}.log.txt"
 	#
 	if [[ "${boost_url_status}" =~ (403|404) ]]; then
 		"${qb_install_dir}/boost/b2" headers |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
@@ -784,25 +798,37 @@ fi
 # libtorrent installation
 #######################################################################################################################################################
 application_name libtorrent
-#
-if [[ "${!app_name_skip:-yes}" = 'no' ]] || [[ "${1}" = "${app_name}" ]]; then
+
+if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
 	if [[ ! -d "${qb_install_dir}/boost" ]]; then
-		echo -e "${tn}${clr} Warning${cend} This module depends on the boost module. Use them together: ${clm}boost libtorrent${cend}"
+		echo -e "${tn} ${urc}${clr} Warning${cend} This module depends on the boost module. Use them together: ${clm}boost libtorrent${cend}"
 	else
 		custom_flags_set
+		#
 		download_folder "${app_name}" "${!app_github_url}"
 		#
 		BOOST_ROOT="${qb_install_dir}/boost"
 		BOOST_INCLUDEDIR="${qb_install_dir}/boost"
 		BOOST_BUILD_PATH="${qb_install_dir}/boost"
-		# Configure for cross-compile
-		b2_toolset="gcc-arm"
-		echo -e "using gcc : arm : armv7l-linux-musleabihf-g++ : <cflags>${optimize/*/$optimize }-std=${standard} -mfloat-abi=hard -mfpu=vfp -mtune=arm1176jzf-s -march=armv6zk -mabi=aapcs-linux -marm <cxxflags>${optimize/*/$optimize }-std=${standard} -mfloat-abi=hard -mfpu=vfp -mtune=arm1176jzf-s -march=armv6zk -mabi=aapcs-linux -marm ;${tn}using python : ${python_short_version} : /usr/bin/python${python_short_version} : /usr/include/python${python_short_version} : /usr/lib/python${python_short_version} ;" > "$HOME/user-config.jam"
-		multi_libtorrent=("toolset=${b2_toolset}") # ${multi_libtorrent[@]}
 		#
-		"${qb_install_dir}/boost/b2" "${multi_libtorrent[@]}" -j"$(nproc)" optimization=speed cxxstd=17 dht=on encryption=on crypto=openssl i2p=on extensions=on variant=release threading=multi link=static boost-link=static runtime-link=static cxxflags="${CXXFLAGS}" cflags="${CPPFLAGS}" linkflags="${LDFLAGS}" install --prefix="${qb_install_dir}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
+		cmake -Wno-dev -Wno-deprecated -G Ninja -B build \
+			-D CMAKE_CXX_COMPILER="${COMPILER_PREFIX}-g++" \
+			-D CMAKE_VERBOSE_MAKEFILE=OFF \
+			-D CMAKE_BUILD_TYPE="Release" \
+			-D CMAKE_CXX_STANDARD="${standard}" \
+			-D CMAKE_PREFIX_PATH="${qb_install_dir};${qb_install_dir}/boost" \
+			-D Boost_NO_BOOST_CMAKE=TRUE \
+			-D CMAKE_CXX_FLAGS="${CXXFLAGS}" \
+			-D BUILD_SHARED_LIBS=OFF \
+			-D Iconv_LIBRARY="${lib_dir}/libiconv.a" \
+			-D CMAKE_INSTALL_PREFIX="${qb_install_dir}" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+		cmake --build build |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
 		#
 		post_build
+		#
+		cmake --install build |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+		#
+		_fix_static_links "${app_name}"
 		#
 		delete_function "${app_name}"
 	fi
@@ -810,20 +836,100 @@ else
 	application_skip
 fi
 #######################################################################################################################################################
-# qtbase installation
+# double conversion installation
 #######################################################################################################################################################
+application_name double_conversion
 
-application_name qtbase
-#
-if [[ "${!app_name_skip:-yes}" = 'no' ]] || [[ "${1}" = "${app_name}" ]]; then
+if [[ "${!app_name_skip:-yes}" == 'no' || "${1}" == "${app_name}" ]]; then
 	custom_flags_set
+	#
 	download_folder "${app_name}" "${!app_github_url}"
-	./configure -device linux-rasp-pi-g++ -device-option CROSS_COMPILE="armv7l-linux-musleabihf-" -prefix "/usr/local/qt5pi" -extprefix "${qb_install_dir}" -hostprefix "${qb_install_dir}/qt5-host" -opensource -confirm-license -release -openssl-linked -static -c++std ${standard} -qt-pcre -no-iconv -no-feature-glib -no-feature-opengl -no-feature-dbus -no-feature-gui -no-feature-widgets -no-feature-testlib -no-compile-examples -I "${include_dir}" -L "${lib_dir}" QMAKE_LFLAGS="${LDFLAGS}" |& tee "${qb_install_dir}/logs/${app_name}.log.txt"
-	make -j"$(nproc)" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	cmake -Wno-dev -Wno-deprecated -G Ninja -B build \
+		-D CMAKE_CXX_COMPILER="${COMPILER_PREFIX}-g++" \
+		-D CMAKE_VERBOSE_MAKEFILE=OFF \
+		-D CMAKE_PREFIX_PATH="${qb_install_dir}" \
+		-D CMAKE_CXX_FLAGS="${CXXFLAGS}" \
+		-D CMAKE_INSTALL_LIBDIR=lib \
+		-D BUILD_SHARED_LIBS=OFF \
+		-D CMAKE_INSTALL_PREFIX="${qb_install_dir}" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	cmake --build build |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	#
+	cmake --install build |& tee -a "${qt_install_dir}/logs/${app_name}.log.txt"
 	#
 	post_build
 	#
-	make install |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
+	_fix_static_links "${app_name}"
+	#
+	delete_function "${app_name}"
+else
+	application_skip
+fi
+#######################################################################################################################################################
+# qtbase installation
+#######################################################################################################################################################
+application_name qtbase
+
+if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
+	#
+	download_file "${app_name}" "${!app_url}"
+	#
+	if [[ ! -d "${qb_install_dir}/qt-host" ]]; then
+		#
+		# BUILD QT FOR HOST
+		#
+		echo -e "${tn}${clc}Building Qt for Host${cend}"
+		custom_flags_unset
+		#
+		cmake -Wno-dev -Wno-deprecated -G Ninja -B build-host \
+			-D CMAKE_VERBOSE_MAKEFILE=ON \
+			-D CMAKE_BUILD_TYPE="release" \
+			-D QT_FEATURE_optimize_full=on \
+			-D QT_FEATURE_gui=off \
+			-D QT_FEATURE_widgets=off \
+			-D QT_FEATURE_testlib=off \
+			-D QT_BUILD_EXAMPLES=off \
+			-D QT_BUILD_TESTS=off \
+			-D CMAKE_CXX_STANDARD="${standard}" \
+			-D CMAKE_INSTALL_PREFIX="${qb_install_dir}/qt-host" |& tee -a "${qb_install_dir}/logs/${app_name}-HOST.log.txt"
+		cmake --build build-host |& tee -a "${qb_install_dir}/logs/${app_name}-HOST.log.txt"
+		#
+		post_build
+		#
+		cmake --install build-host |& tee -a "${qb_install_dir}/logs/${app_name}-HOST.log.txt"
+	fi
+	#
+	# BUILD QT FOR RPI
+	#
+	echo -e "${tn}${clc}Building Qt for RPi${cend}"
+	custom_flags_set
+	#
+	./configure -static -- -Wno-dev -Wno-deprecated -G Ninja -B build-rpi \
+		-D CMAKE_BUILD_TYPE="release" \
+		-D CMAKE_VERBOSE_MAKEFILE=on \
+		-D QT_HOST_PATH="${qb_install_dir}/qt-host" \
+		-D CMAKE_TOOLCHAIN_FILE="${AUX_DIR}/toolchain.cmake" \
+		-D QT_FEATURE_optimize_full=on -D QT_FEATURE_static=on -D QT_FEATURE_shared=off \
+		-D QT_FEATURE_gui=off -D QT_FEATURE_openssl_linked=on \
+		-D QT_FEATURE_dbus=off -D QT_FEATURE_system_pcre2=off -D QT_FEATURE_widgets=off \
+		-D QT_FEATURE_testlib=off -D QT_BUILD_EXAMPLES=off -D QT_BUILD_TESTS=off \
+		-D QT_FEATURE_brotli=off \
+		-D CMAKE_CXX_STANDARD="${standard}" \
+		-D CMAKE_PREFIX_PATH="${qb_install_dir}" \
+		-D CMAKE_INSTALL_PREFIX="${qb_install_dir}" \
+		-D CMAKE_FIND_ROOT_PATH="${qb_install_dir}" \
+		-D QT_BUILD_SHARED_LIBS=off \
+		-D CMAKE_SKIP_RPATH=on -D CMAKE_SKIP_INSTALL_RPATH=on \
+		-D QT_QMAKE_TARGET_MKSPEC=devices/linux-rasp-pi4-v3d-g++ |& tee -a "${qb_install_dir}/logs/${app_name}-RPI.log.txt"
+	#
+	cmake --build build-rpi |& tee -a "${qb_install_dir}/logs/${app_name}-RPI.log.txt"
+	#
+	post_build
+	#
+	cmake --install build-rpi |& tee -a "${qb_install_dir}/logs/${app_name}-RPI.log.txt"
+	#
+	_fix_static_links "${app_name}"
 	#
 	delete_function "${app_name}"
 else
