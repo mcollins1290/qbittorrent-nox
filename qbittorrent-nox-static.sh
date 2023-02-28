@@ -1004,7 +1004,7 @@ if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
 		#
 		download_folder "${app_name}" "${!app_github_url}"
 		"${qb_install_dir}/bin/qt-cmake" -Wno-dev -Wno-deprecated -G Ninja -B build \
-			-D CMAKE_VERBOSE_MAKEFILE=ON \
+			-D CMAKE_VERBOSE_MAKEFILE=OFF \
 			-D CMAKE_BUILD_TYPE="release" \
 			-D QT6=ON \
 			-D CMAKE_CXX_STANDARD="${standard}" \
