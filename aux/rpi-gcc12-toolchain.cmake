@@ -8,7 +8,7 @@ set(CMAKE_SYSROOT "/opt/gcc-12-cross/aarch64-linux-gnu-sysroot")
 
 # Allow overriding from the command line/env, but default to qb_install_dir
 if(NOT DEFINED QBT_STAGING_ROOT)
-  set(QBT_STAGING_ROOT "/build-rpi/static/qbittorrent/build")
+  set(QBT_STAGING_ROOT "/build-rpi/static/qbittorrent-nox/build")
 endif()
 
 set(CMAKE_FIND_ROOT_PATH
