@@ -25,7 +25,7 @@ set_default_values() {
         #
         libtorrent_version="${libtorrent_version:-2.0}"
         #
-        qt_target_version='6.5.0'
+        qt_target_version='6.10.0'
         #
         qb_python_version="3"
         #
@@ -243,8 +243,8 @@ custom_flags_unset() {
         unset lib_dir
 
         unset CHOST
-        CC=x86_64-linux-gnu-gcc
-        CXX=x86_64-linux-gnu-g++
+        CC=gcc
+        CXX=g++
         unset LD_LIBRARY_PATH
         unset PKG_CONFIG_PATH
 
@@ -261,7 +261,7 @@ set_module_urls() {
         linux_headers_github_url="https://github.com/raspberrypi/linux"
         linux_headers_github_tag="$(git_git ls-remote --symref ${linux_headers_github_url} HEAD | awk -F'[/\t]' 'NR == 1 {print $3}')"
         #
-        glibc_url="https://ftp.gnu.org/gnu/libc/glibc-2.36.tar.gz"
+        glibc_url="https://ftp.gnu.org/gnu/libc/glibc-2.41.tar.gz"
         #
         zlib_github_tag="$(git_git ls-remote -q -t --refs https://github.com/madler/zlib.git | awk '{sub("refs/tags/", "");sub("(.*)(-[^0-9].*)(.*)", ""); print $2 }' | awk '!/^$/' | sort -rV | head -n 1)"
         zlib_url="https://github.com/madler/zlib/archive/${zlib_github_tag}.tar.gz"
@@ -663,7 +663,6 @@ if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
 			-D QT_FEATURE_testlib=off \
 			-D QT_BUILD_EXAMPLES=off \
 			-D QT_BUILD_TESTS=off \
-			-D QT_BUILD_TOOLS=on \
 			-D CMAKE_CXX_STANDARD="${standard}" \
 			-D CMAKE_INSTALL_PREFIX="${qb_install_dir}/qt-host" |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
 			cmake --build build-host |& tee -a "${qb_install_dir}/logs/${app_name}.log.txt"
@@ -690,7 +689,7 @@ if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
                 #
                 # BUILD QT TOOLS FOR HOST
                 #
-                custom_flags_unset
+                #custom_flags_unset
                 echo -e "${tn}${clc}Building Qt Tools for Host${cend}"
                 "${qb_install_dir}/qt-host/bin/qt-cmake" -Wno-dev -Wno-deprecated -G Ninja -B build-host \
                         -D CMAKE_VERBOSE_MAKEFILE=OFF \
@@ -1026,7 +1025,7 @@ if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
 		-D CMAKE_INSTALL_PREFIX="${qb_install_dir}/qt-rpi" \
 		-D CMAKE_PREFIX_PATH="${qb_install_dir};${qb_install_dir}/qt-host" \
 		-D QT_HOST_PATH="${qb_install_dir}/qt-host" \
-		-D CMAKE_TOOLCHAIN_FILE="${AUX_DIR}/rpi-gcc12-toolchain.cmake" \
+		-D CMAKE_TOOLCHAIN_FILE="${AUX_DIR}/rpi-gcc14-toolchain.cmake" \
 		\
 		-D QT_FEATURE_optimize_full=on \
 		-D QT_FEATURE_static=on \
@@ -1080,7 +1079,7 @@ if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
 		-D CMAKE_BUILD_TYPE=Release \
 		-D CMAKE_CXX_STANDARD="${standard}" \
 		-D CMAKE_INSTALL_PREFIX="${qb_install_dir}/qt-rpi" \
-		-D CMAKE_TOOLCHAIN_FILE="${AUX_DIR}/rpi-gcc12-toolchain.cmake" \
+		-D CMAKE_TOOLCHAIN_FILE="${AUX_DIR}/rpi-gcc14-toolchain.cmake" \
 		-D CMAKE_PREFIX_PATH="${qb_install_dir}/qt-rpi" \
 		-D Qt6_DIR="${qb_install_dir}/qt-rpi/lib/cmake/Qt6" \
 		-D BUILD_SHARED_LIBS=OFF \
@@ -1117,7 +1116,7 @@ if [[ "${!app_name_skip:-yes}" == 'no' ]] || [[ "${1}" == "${app_name}" ]]; then
                 download_folder "${app_name}" "${!app_github_url}"
 		"${qb_install_dir}/qt-rpi/bin/qt-cmake" -Wno-dev -Wno-deprecated -G Ninja -B build-rpi-qbt \
 		\
-		-D CMAKE_TOOLCHAIN_FILE="${AUX_DIR}/rpi-gcc12-toolchain.cmake" \
+		-D CMAKE_TOOLCHAIN_FILE="${AUX_DIR}/rpi-gcc14-toolchain.cmake" \
 		-D CMAKE_BUILD_TYPE=Release \
 		-D CMAKE_VERBOSE_MAKEFILE=OFF \
 		-D CMAKE_CXX_STANDARD="${standard}" \
