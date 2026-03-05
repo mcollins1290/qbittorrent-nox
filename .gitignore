@@ -1,1 +1,10 @@
-build/
+# Ignore everything in this folder
+*
+
+# But track these
+!build-qbittorrent-nox-static-aarch64-musl.sh
+!toolchains/
+!toolchains/aarch64-musl-gcc14-pi4.cmake
+
+# (Optional) also track the .gitignore itself
+!.gitignore
