@@ -2,8 +2,8 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 
-set(TOOLCHAIN_ROOT "/opt/gcc-14.2.0-musl-cross")
-set(TARGET_TRIPLE  "aarch64-linux-musl")
+set(TOOLCHAIN_ROOT "/opt/gcc-14.2.0-musl-cross" CACHE PATH "Root of the musl cross toolchain")
+set(TARGET_TRIPLE  "aarch64-linux-musl" CACHE STRING "Cross compiler target triple")
 set(CMAKE_SYSROOT  "${TOOLCHAIN_ROOT}/${TARGET_TRIPLE}/sysroot")
 
 set(CMAKE_C_COMPILER   "${TOOLCHAIN_ROOT}/bin/${TARGET_TRIPLE}-gcc")
