@@ -114,7 +114,12 @@ rm_rf_safe() {
 }
 
 clean() {
-  msg "Cleaning build outputs (keeping downloads cache: $DL)"
+  local keep_downloads="${1:-1}"
+  if [[ "$keep_downloads" == "1" ]]; then
+    msg "Cleaning build outputs (keeping downloads cache: $DL)"
+  else
+    msg "Cleaning build outputs"
+  fi
   assert_rm_rf_safe "$BUILD"
   assert_rm_rf_safe "$SRC"
   assert_rm_rf_safe "$OUT"
@@ -128,7 +133,7 @@ clean() {
 distclean() {
   msg "Distclean (removing everything including downloads cache: $DL)"
   assert_rm_rf_safe "$DL"
-  clean
+  clean 0
   rm_rf_safe "$DL"
 }
 
@@ -314,6 +319,12 @@ need python3
 if [[ "$DO_DISTCLEAN" == "1" && "$DO_REBUILD" != "1" ]]; then
   distclean
   msg "Distclean complete."
+  exit 0
+fi
+
+if [[ "$DO_CLEAN" == "1" && "$DO_REBUILD" != "1" ]]; then
+  clean
+  msg "Clean complete."
   exit 0
 fi
 
