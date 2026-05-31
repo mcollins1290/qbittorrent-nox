@@ -3,6 +3,8 @@
 
 # But track these
 !build-qbittorrent-nox-static-aarch64-musl.sh
+!dependency-pins.env
+!README.md
 !toolchains/
 !toolchains/aarch64-musl-gcc14-pi4.cmake
 
