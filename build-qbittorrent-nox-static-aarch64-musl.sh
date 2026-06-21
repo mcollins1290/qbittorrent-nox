@@ -1177,62 +1177,74 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 
-old = '''\
-\t\tfor (int i = 0; i < sk_GENERAL_NAME_num(gens); ++i)
-\t\t{
-\t\t\tGENERAL_NAME* gen = sk_GENERAL_NAME_value(gens, i);
-\t\t\tif (gen->type != GEN_DNS) continue;
-\t\t\tASN1_IA5STRING* domain = gen->d.dNSName;
-\t\t\tif (domain->type != V_ASN1_IA5STRING || !domain->data || !domain->length) continue;
-\t\t\tauto const* torrent_name = reinterpret_cast<char const*>(domain->data);
-\t\t\tauto const name_length = aux::numeric_cast<std::size_t>(domain->length);
-'''
-new = '''\
-\t\tfor (int i = 0; i < sk_GENERAL_NAME_num(gens); ++i)
-\t\t{
-\t\t\tGENERAL_NAME const* gen = sk_GENERAL_NAME_value(gens, i);
-\t\t\tif (gen->type != GEN_DNS) continue;
-\t\t\tASN1_IA5STRING const* domain = gen->d.dNSName;
-\t\t\tif (ASN1_STRING_type(domain) != V_ASN1_IA5STRING || !ASN1_STRING_get0_data(domain)
-\t\t\t\t|| ASN1_STRING_length(domain) <= 0) continue;
-\t\t\tauto const* torrent_name = reinterpret_cast<char const*>(ASN1_STRING_get0_data(domain));
-\t\t\tauto const name_length = aux::numeric_cast<std::size_t>(ASN1_STRING_length(domain));
-'''
-if old not in text:
-    sys.exit("unable to patch libtorrent OpenSSL SAN handling")
-text = text.replace(old, new, 1)
+replacements = [
+    (
+        "\t\t\tGENERAL_NAME* gen = sk_GENERAL_NAME_value(gens, i);",
+        "\t\t\tGENERAL_NAME const* gen = sk_GENERAL_NAME_value(gens, i);",
+    ),
+    (
+        "\t\t\tASN1_IA5STRING* domain = gen->d.dNSName;",
+        "\t\t\tASN1_IA5STRING const* domain = gen->d.dNSName;",
+    ),
+    (
+        "\t\t\tif (domain->type != V_ASN1_IA5STRING || !domain->data || !domain->length) continue;",
+        "\t\t\tif (ASN1_STRING_type(domain) != V_ASN1_IA5STRING || !ASN1_STRING_get0_data(domain)\n"
+        "\t\t\t\t|| ASN1_STRING_length(domain) <= 0) continue;",
+    ),
+    (
+        "\t\t\tauto const* torrent_name = reinterpret_cast<char const*>(domain->data);",
+        "\t\t\tauto const* torrent_name = reinterpret_cast<char const*>(ASN1_STRING_get0_data(domain));",
+    ),
+    (
+        "\t\t\tauto const name_length = aux::numeric_cast<std::size_t>(domain->length);",
+        "\t\t\tauto const name_length = aux::numeric_cast<std::size_t>(ASN1_STRING_length(domain));",
+    ),
+    (
+        "\t\tX509_NAME* name = X509_get_subject_name(cert);",
+        "\t\tX509_NAME const* name = X509_get_subject_name(cert);",
+    ),
+    (
+        "\t\tASN1_STRING* common_name = nullptr;",
+        "\t\tASN1_STRING const* common_name = nullptr;",
+    ),
+    (
+        "\t\t\tX509_NAME_ENTRY* name_entry = X509_NAME_get_entry(name, i);",
+        "\t\t\tX509_NAME_ENTRY const* name_entry = X509_NAME_get_entry(name, i);",
+    ),
+    (
+        "\t\tif (common_name && common_name->data && common_name->length)",
+        "\t\tif (common_name && ASN1_STRING_get0_data(common_name) && ASN1_STRING_length(common_name) > 0)",
+    ),
+    (
+        "\t\t\tauto const* torrent_name = reinterpret_cast<char const*>(common_name->data);",
+        "\t\t\tauto const* torrent_name = reinterpret_cast<char const*>(ASN1_STRING_get0_data(common_name));",
+    ),
+    (
+        "\t\t\tauto const name_length = aux::numeric_cast<std::size_t>(common_name->length);",
+        "\t\t\tauto const name_length = aux::numeric_cast<std::size_t>(ASN1_STRING_length(common_name));",
+    ),
+]
 
-old = '''\
-\t\tX509_NAME* name = X509_get_subject_name(cert);
-\t\tint i = -1;
-\t\tASN1_STRING* common_name = nullptr;
-\t\twhile ((i = X509_NAME_get_index_by_NID(name, NID_commonName, i)) >= 0)
-\t\t{
-\t\t\tX509_NAME_ENTRY* name_entry = X509_NAME_get_entry(name, i);
-\t\t\tcommon_name = X509_NAME_ENTRY_get_data(name_entry);
-\t\t}
-\t\tif (common_name && common_name->data && common_name->length)
-\t\t{
-\t\t\tauto const* torrent_name = reinterpret_cast<char const*>(common_name->data);
-\t\t\tauto const name_length = aux::numeric_cast<std::size_t>(common_name->length);
-'''
-new = '''\
-\t\tX509_NAME const* name = X509_get_subject_name(cert);
-\t\tint i = -1;
-\t\tASN1_STRING const* common_name = nullptr;
-\t\twhile ((i = X509_NAME_get_index_by_NID(name, NID_commonName, i)) >= 0)
-\t\t{
-\t\t\tX509_NAME_ENTRY const* name_entry = X509_NAME_get_entry(name, i);
-\t\t\tcommon_name = X509_NAME_ENTRY_get_data(name_entry);
-\t\t}
-\t\tif (common_name && ASN1_STRING_get0_data(common_name) && ASN1_STRING_length(common_name) > 0)
-\t\t{
-\t\t\tauto const* torrent_name = reinterpret_cast<char const*>(ASN1_STRING_get0_data(common_name));
-\t\t\tauto const name_length = aux::numeric_cast<std::size_t>(ASN1_STRING_length(common_name));
-'''
-if old not in text:
-    sys.exit("unable to patch libtorrent OpenSSL common-name handling")
-text = text.replace(old, new, 1)
+for old_text, new_text in replacements:
+    text = text.replace(old_text, new_text)
+
+required = [
+    "GENERAL_NAME const* gen = sk_GENERAL_NAME_value(gens, i);",
+    "ASN1_IA5STRING const* domain = gen->d.dNSName;",
+    "ASN1_STRING_get0_data(domain)",
+    "ASN1_STRING_length(domain)",
+    "ASN1_STRING const* common_name = nullptr;",
+    "X509_NAME_ENTRY const* name_entry = X509_NAME_get_entry(name, i);",
+    "ASN1_STRING_get0_data(common_name)",
+    "ASN1_STRING_length(common_name)",
+]
+for needle in required:
+    if needle not in text:
+        sys.exit(f"unable to patch libtorrent OpenSSL handling: missing {needle}")
+
+for forbidden in ["domain->data", "domain->length", "common_name->data", "common_name->length"]:
+    if forbidden in text:
+        sys.exit(f"unable to patch libtorrent OpenSSL handling: still found {forbidden}")
 
 path.write_text(text)
 PY
