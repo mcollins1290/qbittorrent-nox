@@ -6,7 +6,7 @@
 !dependency-pins.env
 !README.md
 !toolchains/
-!toolchains/aarch64-musl-gcc14-pi4.cmake
+!toolchains/aarch64-musl-pi4.cmake
 
 # (Optional) also track the .gitignore itself
 !.gitignore

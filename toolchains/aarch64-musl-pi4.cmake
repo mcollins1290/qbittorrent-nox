@@ -1,10 +1,31 @@
-# toolchains/aarch64-musl-gcc14-pi4.cmake
+# toolchains/aarch64-musl-pi4.cmake
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 
-set(TOOLCHAIN_ROOT "/opt/gcc-14.2.0-musl-cross" CACHE PATH "Root of the musl cross toolchain")
-set(TARGET_TRIPLE  "aarch64-linux-musl" CACHE STRING "Cross compiler target triple")
-set(CMAKE_SYSROOT  "${TOOLCHAIN_ROOT}/${TARGET_TRIPLE}/sysroot")
+set(TOOLCHAIN_ROOT "" CACHE PATH "Root of the musl cross toolchain")
+set(TARGET_TRIPLE "aarch64-linux-musl" CACHE STRING "Cross compiler target triple")
+set(SYSROOT "" CACHE PATH "Target sysroot")
+
+list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
+  TOOLCHAIN_ROOT
+  TARGET_TRIPLE
+  SYSROOT
+  STAGING_PREFIX
+)
+
+if(NOT TOOLCHAIN_ROOT AND DEFINED ENV{TOOLCHAIN_ROOT})
+  set(TOOLCHAIN_ROOT "$ENV{TOOLCHAIN_ROOT}" CACHE PATH "Root of the musl cross toolchain" FORCE)
+endif()
+
+if(NOT TOOLCHAIN_ROOT)
+  message(FATAL_ERROR "TOOLCHAIN_ROOT is required. Pass -DTOOLCHAIN_ROOT=/path/to/musl-cross or set TOOLCHAIN_ROOT in the environment.")
+endif()
+
+if(NOT SYSROOT)
+  set(SYSROOT "${TOOLCHAIN_ROOT}/${TARGET_TRIPLE}/sysroot" CACHE PATH "Target sysroot" FORCE)
+endif()
+
+set(CMAKE_SYSROOT "${SYSROOT}" CACHE PATH "Target sysroot" FORCE)
 
 set(CMAKE_C_COMPILER   "${TOOLCHAIN_ROOT}/bin/${TARGET_TRIPLE}-gcc")
 set(CMAKE_CXX_COMPILER "${TOOLCHAIN_ROOT}/bin/${TARGET_TRIPLE}-g++")

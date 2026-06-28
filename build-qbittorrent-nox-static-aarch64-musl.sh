@@ -12,11 +12,11 @@ set -euo pipefail
 SCRIPT_NAME="build-qbittorrent-nox-static-aarch64-musl"
 SCRIPT_VERSION="v0.0.45"
 
-TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT:-/opt/gcc-14.2.0-musl-cross}"
+TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT:-/opt/gcc-15.3.0-musl-cross}"
 TARGET_TRIPLE="${TARGET_TRIPLE:-aarch64-linux-musl}"
 SYSROOT="${SYSROOT:-${TOOLCHAIN_ROOT}/${TARGET_TRIPLE}/sysroot}"
 TOP="${TOP:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
-TOOLCHAIN_FILE="${TOOLCHAIN_FILE:-$TOP/toolchains/aarch64-musl-gcc14-pi4.cmake}"
+TOOLCHAIN_FILE="${TOOLCHAIN_FILE:-$TOP/toolchains/aarch64-musl-pi4.cmake}"
 
 HOST_CC="${HOST_CC:-/usr/bin/gcc}"
 HOST_CXX="${HOST_CXX:-/usr/bin/g++}"
@@ -545,6 +545,7 @@ cmake_cfg() {
   cmake -G Ninja -S "$src_dir" -B "$build_dir" \
     -DTOOLCHAIN_ROOT="$TOOLCHAIN_ROOT" \
     -DTARGET_TRIPLE="$TARGET_TRIPLE" \
+    -DSYSROOT="$SYSROOT" \
     "$@"
 }
 
