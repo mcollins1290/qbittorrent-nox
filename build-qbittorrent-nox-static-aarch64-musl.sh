@@ -49,6 +49,11 @@ PREFIX="${PREFIX:-$OUT/${TARGET_TRIPLE}}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$TOP/artifacts}"
 PINS_FILE="${PINS_FILE:-$TOP/dependency-pins.env}"
 
+DEPLOY_HOST="${DEPLOY_HOST:-raspberrypi2.totten}"
+DEPLOY_DIR="${DEPLOY_DIR:-/usr/local/bin}"
+DEPLOY_SERVICE="${DEPLOY_SERVICE:-qbittorrent-nox.service}"
+DEPLOY_RESTART_CMD="${DEPLOY_RESTART_CMD:-systemctl restart ${DEPLOY_SERVICE}}"
+
 JOBS="${JOBS:-$(nproc)}"
 STRIP_BIN="${STRIP_BIN:-1}"
 ASSUME_YES="${ASSUME_YES:-0}"
@@ -141,11 +146,14 @@ ${SCRIPT_NAME} ${SCRIPT_VERSION}
 
 Usage:
   $0 [--clean] [--rebuild] [--distclean] [--force-deps] [--qbittorrent-only]
-     [--check-updates] [--update-pins] [--no-strip] [--yes] [--jobs N] [--help]
+     [--check-updates] [--update-pins] [--deploy] [--deploy-only]
+     [--no-strip] [--yes] [--jobs N] [--help]
 
 Modes:
   --check-updates       Report newer dependency releases and exit
   --update-pins         Update pinned dependency versions/sha256 values and exit
+  --deploy              Deploy artifact after a successful build and restart service
+  --deploy-only         Deploy existing artifact and restart service without building
 
 Environment:
   QBT_VER=latest        Resolve and build the latest qBittorrent GitHub release tag
@@ -155,6 +163,10 @@ Environment:
   ASSUME_YES=1          Start the build without prompting
   SKIP_EXISTING=0       Rebuild prerequisites instead of skipping current stamps
   TRUST_UNSTAMPED_DEPS=1 Treat existing unstamped prerequisite files as reusable
+  DEPLOY_HOST=host      SSH host for deployment (default: raspberrypi2.totten)
+  DEPLOY_DIR=path       Remote install directory (default: /usr/local/bin)
+  DEPLOY_SERVICE=name   Remote systemd service to restart (default: qbittorrent-nox.service)
+  DEPLOY_RESTART_CMD=cmd Remote restart command (default: systemctl restart DEPLOY_SERVICE)
 EOF
 }
 
@@ -555,6 +567,77 @@ cmake_build_install() {
   cmake --install "$build_dir"
 }
 
+confirm_deploy() {
+  local answer=""
+  if [[ "$ASSUME_YES" == "1" ]]; then
+    msg "Deploy confirmation skipped (ASSUME_YES=1)."
+    return 0
+  fi
+
+  printf "\nDeploy %s/qbittorrent-nox to %s:%s and run '%s'? [y/N] " \
+    "$ARTIFACTS_DIR" "$DEPLOY_HOST" "$DEPLOY_DIR" "$DEPLOY_RESTART_CMD"
+  if ! read -r answer; then
+    die "unable to read deploy confirmation"
+  fi
+
+  case "$answer" in
+    [Yy]|[Yy][Ee][Ss]) ;;
+    *) msg "Deploy aborted."; exit 0 ;;
+  esac
+}
+
+deploy_artifact() {
+  local artifact="$ARTIFACTS_DIR/qbittorrent-nox"
+  local local_sha remote_path remote_sha
+  local require_confirm="${1:-1}"
+  [[ -f "$artifact" ]] || die "artifact not found: $artifact"
+
+  need rsync
+  need ssh
+  need sha256sum
+  if [[ "$require_confirm" == "1" ]]; then
+    confirm_deploy
+  fi
+
+  msg "Deploy: $artifact -> ${DEPLOY_HOST}:${DEPLOY_DIR}/"
+  rsync -aAX "$artifact" "${DEPLOY_HOST}:${DEPLOY_DIR}/"
+
+  local_sha="$(sha256sum "$artifact" | awk '{print $1}')"
+  remote_path="${DEPLOY_DIR%/}/qbittorrent-nox"
+  msg "Verify deployed artifact sha256"
+  # shellcheck disable=SC2029 # remote_path is intentionally expanded locally.
+  remote_sha="$(ssh "$DEPLOY_HOST" "sha256sum '$remote_path' | awk '{print \$1}'")"
+  [[ -n "$remote_sha" ]] || die "unable to read deployed artifact sha256: ${DEPLOY_HOST}:${remote_path}"
+  if [[ "$remote_sha" != "$local_sha" ]]; then
+    die "deployed artifact sha256 mismatch: local ${local_sha}, remote ${remote_sha}"
+  fi
+
+  msg "Restart remote service: ${DEPLOY_SERVICE}"
+  # shellcheck disable=SC2029 # DEPLOY_RESTART_CMD is intentionally expanded locally.
+  ssh "$DEPLOY_HOST" "$DEPLOY_RESTART_CMD"
+}
+
+offer_deploy_after_build() {
+  local answer=""
+  [[ "$DO_DEPLOY" == "0" ]] || return 0
+  [[ "$ASSUME_YES" == "0" ]] || return 0
+
+  printf "\nBuild completed successfully. Deploy %s/qbittorrent-nox to %s:%s and restart %s? [y/N] " \
+    "$ARTIFACTS_DIR" "$DEPLOY_HOST" "$DEPLOY_DIR" "$DEPLOY_SERVICE"
+  if ! read -r answer; then
+    die "unable to read deploy selection"
+  fi
+
+  case "$answer" in
+    [Yy]|[Yy][Ee][Ss])
+      deploy_artifact 0
+      ;;
+    *)
+      msg "Deploy skipped."
+      ;;
+  esac
+}
+
 ORIGINAL_ARGC=$#
 DO_CLEAN=0
 DO_REBUILD=0
@@ -563,6 +646,8 @@ DO_QBT_ONLY=0
 DO_CLEAN_BEFORE_BUILD=0
 DO_CHECK_UPDATES=0
 DO_UPDATE_PINS=0
+DO_DEPLOY=0
+DO_DEPLOY_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -573,6 +658,8 @@ while [[ $# -gt 0 ]]; do
     --qbittorrent-only) DO_QBT_ONLY=1; shift ;;
     --check-updates) DO_CHECK_UPDATES=1; shift ;;
     --update-pins) DO_UPDATE_PINS=1; shift ;;
+    --deploy) DO_DEPLOY=1; shift ;;
+    --deploy-only) DO_DEPLOY=1; DO_DEPLOY_ONLY=1; shift ;;
     --no-strip) STRIP_BIN=0; shift ;;
     --yes|-y) ASSUME_YES=1; shift ;;
     --jobs) shift; [[ $# -gt 0 ]] || die "--jobs requires a value"; JOBS="$1"; shift ;;
@@ -594,8 +681,18 @@ msg "Pins file: ${PINS_FILE}"
 msg "Jobs: ${JOBS}"
 msg "Strip: ${STRIP_BIN}"
 msg "OpenSSL OPENSSLDIR: ${OPENSSL_SYSTEM_DIR}"
+if [[ "$DO_DEPLOY" == "1" ]]; then
+  msg "Deploy target: ${DEPLOY_HOST}:${DEPLOY_DIR}"
+  msg "Deploy restart: ${DEPLOY_RESTART_CMD}"
+fi
 
 need python3
+
+if [[ "$DO_DEPLOY_ONLY" == "1" ]]; then
+  deploy_artifact
+  msg "Deploy complete."
+  exit 0
+fi
 
 if [[ "$DO_CHECK_UPDATES" == "1" ]]; then
   need curl
@@ -1741,5 +1838,9 @@ fi
 
 build_qbittorrent
 verify_static
+if [[ "$DO_DEPLOY" == "1" ]]; then
+  deploy_artifact
+fi
+offer_deploy_after_build
 
 msg "All done."
