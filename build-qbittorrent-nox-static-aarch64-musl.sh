@@ -151,6 +151,7 @@ Usage:
 
 Modes:
   --check-updates       Report newer dependency releases and exit
+  --check-update        Alias for --check-updates
   --update-pins         Update pinned dependency versions/sha256 values and exit
   --deploy              Deploy artifact after a successful build and restart service
   --deploy-only         Deploy existing artifact and restart service without building
@@ -394,9 +395,48 @@ check_one_update() {
   print_update_row "$name" "$current" "$latest"
 }
 
+qbt_built_version() {
+  local meta="$ARTIFACTS_DIR/qbittorrent-nox.build-info"
+  local ver=""
+
+  if [[ -f "$ARTIFACTS_DIR/qbittorrent-nox" && -f "$meta" ]]; then
+    ver="$(awk -F= '$1 == "qbt_ver" {print $2; exit}' "$meta")"
+    if [[ -n "$ver" ]]; then
+      printf '%s\n' "$ver"
+      return 0
+    fi
+  fi
+
+  [[ -f "$ARTIFACTS_DIR/qbittorrent-nox" ]] || return 0
+  find "$BUILD" -maxdepth 1 -type d -name 'qbittorrent-*' -printf '%T@ %f\n' 2>/dev/null \
+    | sort -nr \
+    | awk 'NR == 1 {sub(/^qbittorrent-/, "", $2); print $2}'
+}
+
+check_qbittorrent_update() {
+  local latest built status
+  latest="$(latest_version_from_github_release qbittorrent/qBittorrent release- 2>/dev/null || true)"
+  built="$(qbt_built_version)"
+
+  if [[ -z "$latest" ]]; then
+    status="check failed"
+    latest="unknown"
+  elif [[ -z "$built" ]]; then
+    status="no built artifact metadata"
+    built="unknown"
+  elif [[ "$built" == "$latest" ]]; then
+    status="built artifact is latest; no rebuild needed"
+  else
+    status="built artifact is not latest; rebuild recommended"
+  fi
+
+  printf "  %-18s configured %-10s built %-10s latest %-12s %s\n" \
+    "qBittorrent" "$QBT_VER" "$built" "$latest" "$status"
+}
+
 check_updates() {
   msg "Checking upstream versions (report only)"
-  check_one_update "qBittorrent" "$QBT_VER" latest_version_from_github_release qbittorrent/qBittorrent release-
+  check_qbittorrent_update
   check_one_update "libtorrent" "$LT_VER" latest_version_from_github_release arvidn/libtorrent v
   check_one_update "Boost" "$BOOST_VER" latest_boost_version
   check_one_update "OpenSSL" "$OPENSSL_VER" latest_version_from_listing https://www.openssl.org/source/ 'openssl-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz'
@@ -656,7 +696,7 @@ while [[ $# -gt 0 ]]; do
     --distclean) DO_DISTCLEAN=1; shift ;;
     --force-deps) SKIP_EXISTING=0; shift ;;
     --qbittorrent-only) DO_QBT_ONLY=1; shift ;;
-    --check-updates) DO_CHECK_UPDATES=1; shift ;;
+    --check-updates|--check-update) DO_CHECK_UPDATES=1; shift ;;
     --update-pins) DO_UPDATE_PINS=1; shift ;;
     --deploy) DO_DEPLOY=1; shift ;;
     --deploy-only) DO_DEPLOY=1; DO_DEPLOY_ONLY=1; shift ;;
@@ -1753,7 +1793,7 @@ build_qbittorrent() {
 }
 
 verify_static() {
-  local bin="$PREFIX/bin/qbittorrent-nox"
+  local bin="$PREFIX/bin/qbittorrent-nox" artifact_sha
   [[ -f "$bin" ]] || die "expected binary not found: $bin"
 
   msg "Verify: file(1) reports statically linked"
@@ -1772,6 +1812,21 @@ verify_static() {
 
   mkdir -p "$ARTIFACTS_DIR"
   cp -a "$bin" "$ARTIFACTS_DIR/qbittorrent-nox"
+  artifact_sha="$(sha256sum "$ARTIFACTS_DIR/qbittorrent-nox" | awk '{print $1}')"
+  {
+    printf 'qbt_ver=%s\n' "$QBT_VER"
+    printf 'qbt_tag=%s\n' "$QBT_TAG"
+    printf 'qbt_sha256=%s\n' "$QBT_SHA256"
+    printf 'artifact_sha256=%s\n' "$artifact_sha"
+    printf 'built_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'target=%s\n' "$TARGET_TRIPLE"
+    printf 'toolchain_root=%s\n' "$TOOLCHAIN_ROOT"
+    printf 'libtorrent_ver=%s\n' "$LT_VER"
+    printf 'qt_ver=%s\n' "$QT_VER"
+    printf 'openssl_ver=%s\n' "$OPENSSL_VER"
+    printf 'boost_ver=%s\n' "$BOOST_VER"
+    printf 'zlib_ver=%s\n' "$ZLIB_VER"
+  } >"$ARTIFACTS_DIR/qbittorrent-nox.build-info"
   msg "Artifact: $ARTIFACTS_DIR/qbittorrent-nox"
 }
 
