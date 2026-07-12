@@ -76,6 +76,18 @@ msg() { printf "\n\033[1;36m==>\033[0m %s\n" "$*"; }
 die() { printf "\n\033[1;31merror:\033[0m %s\n" "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 
+if [[ "${FORCE_COLOR:-0}" == "1" || (-t 1 && "${NO_COLOR:-0}" != "1") ]]; then
+  C_RESET=$'\033[0m'
+  C_GREEN=$'\033[1;32m'
+  C_YELLOW=$'\033[1;33m'
+  C_RED=$'\033[1;31m'
+else
+  C_RESET=""
+  C_GREEN=""
+  C_YELLOW=""
+  C_RED=""
+fi
+
 load_pins_file() {
   local line key value lineno=0
   [[ -f "$PINS_FILE" ]] || return 0
@@ -425,25 +437,30 @@ dependency_built_version() {
 
 print_update_row() {
   local name="$1" configured="$2" built="$3" latest="$4"
-  local status
+  local status color
   if [[ -z "$built" ]]; then
     built="unknown"
   fi
   if [[ -z "$latest" ]]; then
     latest="unknown"
     status="check failed"
+    color="$C_RED"
   elif [[ "$built" == "unknown" ]]; then
     status="no built stamp found"
+    color="$C_RED"
   elif [[ "$built" == "mixed" ]]; then
     status="built Qt component versions differ; rebuild recommended"
+    color="$C_YELLOW"
   elif [[ "$built" == "$latest" ]]; then
     status="built version is latest; no rebuild needed"
+    color="$C_GREEN"
   else
     status="built version is not latest; rebuild recommended"
+    color="$C_YELLOW"
   fi
 
-  printf "  %-18s configured %-10s built %-10s latest %-12s %s\n" \
-    "$name" "$configured" "$built" "$latest" "$status"
+  printf "%s  %-18s configured %-10s built %-10s latest %-12s %s%s\n" \
+    "$color" "$name" "$configured" "$built" "$latest" "$status" "$C_RESET"
 }
 
 check_one_update() {
@@ -474,23 +491,28 @@ qbt_built_version() {
 
 check_qbittorrent_update() {
   local latest built status
+  local color
   latest="$(latest_version_from_github_release qbittorrent/qBittorrent release- 2>/dev/null || true)"
   built="$(qbt_built_version)"
 
   if [[ -z "$latest" ]]; then
     status="check failed"
     latest="unknown"
+    color="$C_RED"
   elif [[ -z "$built" ]]; then
     status="no built artifact metadata"
     built="unknown"
+    color="$C_RED"
   elif [[ "$built" == "$latest" ]]; then
     status="built artifact is latest; no rebuild needed"
+    color="$C_GREEN"
   else
     status="built artifact is not latest; rebuild recommended"
+    color="$C_YELLOW"
   fi
 
-  printf "  %-18s configured %-10s built %-10s latest %-12s %s\n" \
-    "qBittorrent" "$QBT_VER" "$built" "$latest" "$status"
+  printf "%s  %-18s configured %-10s built %-10s latest %-12s %s%s\n" \
+    "$color" "qBittorrent" "$QBT_VER" "$built" "$latest" "$status" "$C_RESET"
 }
 
 check_updates() {
