@@ -375,24 +375,83 @@ sha256_from_download() {
   printf '%s\n' "$sha"
 }
 
+newest_stamp_version() {
+  local stamp_dir="$1" stamp_name="$2" stamp=""
+  [[ -d "$stamp_dir" ]] || return 0
+  stamp="$(find "$stamp_dir" -maxdepth 1 -type f -name "${stamp_name}-*.stamp" -printf '%T@ %p\n' 2>/dev/null \
+    | sort -nr \
+    | awk 'NR == 1 {sub(/^[^ ]+ /, ""); print}')"
+  [[ -n "$stamp" ]] || return 0
+  awk -F= '$1 == "version" {print $2; exit}' "$stamp"
+}
+
+dependency_built_version() {
+  case "$1" in
+    libtorrent)
+      newest_stamp_version "$PREFIX/.build-stamps" libtorrent
+      ;;
+    boost)
+      newest_stamp_version "$PREFIX/.build-stamps" boost
+      ;;
+    openssl)
+      newest_stamp_version "$PREFIX/.build-stamps" openssl
+      ;;
+    zlib)
+      newest_stamp_version "$PREFIX/.build-stamps" zlib
+      ;;
+    qt)
+      {
+        newest_stamp_version "$HOST_QT_PREFIX/.build-stamps" qtbase-host
+        newest_stamp_version "$PREFIX/.build-stamps" qtbase-target
+        newest_stamp_version "$HOST_QT_PREFIX/.build-stamps" qttools-host
+        newest_stamp_version "$PREFIX/.build-stamps" qttools-target
+      } | awk '
+        NF { versions[$0] = 1; count++ }
+        END {
+          for (version in versions) {
+            unique++
+            value = version
+          }
+          if (count < 4) print ""
+          else if (unique == 1) print value
+          else print "mixed"
+        }'
+      ;;
+    *)
+      die "unknown dependency update key: $1"
+      ;;
+  esac
+}
+
 print_update_row() {
-  local name="$1" current="$2" latest="$3"
-  if [[ -z "$latest" ]]; then
-    printf "  %-18s current %-10s latest %-12s %s\n" "$name" "$current" "unknown" "check failed"
-  elif [[ "$current" == "latest" ]]; then
-    printf "  %-18s current %-10s latest %-12s %s\n" "$name" "$current" "$latest" "configured to resolve latest"
-  elif [[ "$latest" == "$current" ]]; then
-    printf "  %-18s current %-10s latest %-12s %s\n" "$name" "$current" "$latest" "up to date"
-  else
-    printf "  %-18s current %-10s latest %-12s %s\n" "$name" "$current" "$latest" "update available"
+  local name="$1" configured="$2" built="$3" latest="$4"
+  local status
+  if [[ -z "$built" ]]; then
+    built="unknown"
   fi
+  if [[ -z "$latest" ]]; then
+    latest="unknown"
+    status="check failed"
+  elif [[ "$built" == "unknown" ]]; then
+    status="no built stamp found"
+  elif [[ "$built" == "mixed" ]]; then
+    status="built Qt component versions differ; rebuild recommended"
+  elif [[ "$built" == "$latest" ]]; then
+    status="built version is latest; no rebuild needed"
+  else
+    status="built version is not latest; rebuild recommended"
+  fi
+
+  printf "  %-18s configured %-10s built %-10s latest %-12s %s\n" \
+    "$name" "$configured" "$built" "$latest" "$status"
 }
 
 check_one_update() {
-  local name="$1" current="$2" latest=""
-  shift 2
+  local name="$1" configured="$2" built_key="$3" latest="" built=""
+  shift 3
   latest="$("$@" 2>/dev/null || true)"
-  print_update_row "$name" "$current" "$latest"
+  built="$(dependency_built_version "$built_key")"
+  print_update_row "$name" "$configured" "$built" "$latest"
 }
 
 qbt_built_version() {
@@ -437,11 +496,11 @@ check_qbittorrent_update() {
 check_updates() {
   msg "Checking upstream versions (report only)"
   check_qbittorrent_update
-  check_one_update "libtorrent" "$LT_VER" latest_version_from_github_release arvidn/libtorrent v
-  check_one_update "Boost" "$BOOST_VER" latest_boost_version
-  check_one_update "OpenSSL" "$OPENSSL_VER" latest_version_from_listing https://www.openssl.org/source/ 'openssl-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz'
-  check_one_update "zlib" "$ZLIB_VER" latest_version_from_listing https://zlib.net/ 'zlib-([0-9]+\.[0-9]+(?:\.[0-9]+)?)\.tar\.(?:gz|xz)'
-  check_one_update "Qt" "$QT_VER" latest_qt_version
+  check_one_update "libtorrent" "$LT_VER" libtorrent latest_version_from_github_release arvidn/libtorrent v
+  check_one_update "Boost" "$BOOST_VER" boost latest_boost_version
+  check_one_update "OpenSSL" "$OPENSSL_VER" openssl latest_version_from_listing https://www.openssl.org/source/ 'openssl-([0-9]+\.[0-9]+\.[0-9]+)\.tar\.gz'
+  check_one_update "zlib" "$ZLIB_VER" zlib latest_version_from_listing https://zlib.net/ 'zlib-([0-9]+\.[0-9]+(?:\.[0-9]+)?)\.tar\.(?:gz|xz)'
+  check_one_update "Qt" "$QT_VER" qt latest_qt_version
   msg "No build settings were changed. Run --update-pins to update ${PINS_FILE}."
 }
 
