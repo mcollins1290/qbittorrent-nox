@@ -902,12 +902,19 @@ stamp_file() {
 }
 
 write_build_stamp() {
-  local stamp_dir="$1" name="$2" ver="$3" stamp tmp
+  local stamp_dir="$1" name="$2" ver="$3" stamp tmp old_stamp
   mkdir -p "$stamp_dir"
   stamp="$(stamp_file "$stamp_dir" "$name" "$ver")"
   tmp="${stamp}.tmp.$$"
   stamp_content "$name" "$ver" >"$tmp"
   mv -f -- "$tmp" "$stamp"
+
+  shopt -s nullglob
+  for old_stamp in "$stamp_dir/${name}-"*.stamp; do
+    [[ "$old_stamp" == "$stamp" ]] && continue
+    rm -f -- "$old_stamp"
+  done
+  shopt -u nullglob
 }
 
 stamp_content() {
@@ -1698,6 +1705,144 @@ path.write_text(text)
 PY
 }
 
+apply_qbittorrent_libtorrent21_patch() {
+  local srcdir="$1"
+  [[ "${LT_VER%%.*}" -ge 2 ]] || return 0
+
+  msg "Patch qBittorrent for libtorrent ${LT_VER} storage_params API"
+  python3 - "$srcdir/src/base/bittorrent/customstorage.cpp" "$srcdir/src/base/bittorrent/customstorage.h" <<'PY'
+from pathlib import Path
+import sys
+
+cpp_path = Path(sys.argv[1])
+header_path = Path(sys.argv[2])
+
+cpp = cpp_path.read_text()
+header = header_path.read_text()
+
+old = '''\
+#include <libtorrent/fwd.hpp>
+'''
+new = '''\
+#include <libtorrent/fwd.hpp>
+#include <libtorrent/version.hpp>
+'''
+if old not in header:
+    if "#include <libtorrent/version.hpp>" not in header:
+        sys.exit("unable to patch qBittorrent customstorage.h: libtorrent/version.hpp include point not found")
+else:
+    header = header.replace(old, new, 1)
+
+old = '''\
+    const Path savePath {storageParams.path};
+    m_storageData[storageHolder] =
+    {
+        savePath,
+        storageParams.mapped_files ? *storageParams.mapped_files : storageParams.files,
+        storageParams.priorities
+    };
+'''
+new = '''\
+#if LIBTORRENT_VERSION_NUM < 20100
+    const Path savePath {storageParams.path};
+    m_storageData[storageHolder] =
+    {
+        savePath,
+        storageParams.mapped_files ? *storageParams.mapped_files : storageParams.files,
+        storageParams.priorities
+    };
+#else
+    const std::string savePathString {storageParams.path};
+    const Path savePath {savePathString};
+    m_storageData[storageHolder] =
+    {
+        savePath,
+        storageParams.files,
+        storageParams.renamed_files,
+        storageParams.priorities
+    };
+#endif
+'''
+if old not in cpp:
+    if "storageParams.renamed_files" not in cpp:
+        sys.exit("unable to patch qBittorrent customstorage.cpp: new_torrent block not found")
+else:
+    cpp = cpp.replace(old, new, 1)
+
+old = '''\
+        if (!error)
+            m_storageData[storage].files.rename_file(index, name);
+        handler(name, index, error);
+'''
+new = '''\
+        if (!error)
+        {
+#if LIBTORRENT_VERSION_NUM < 20100
+            m_storageData[storage].files.rename_file(index, name);
+#else
+            m_storageData[storage].renamedFiles.rename_file(m_storageData[storage].files, index, name);
+#endif
+        }
+        handler(name, index, error);
+'''
+if old not in cpp:
+    if "renamedFiles.rename_file" not in cpp:
+        sys.exit("unable to patch qBittorrent customstorage.cpp: async_rename_file block not found")
+else:
+    cpp = cpp.replace(old, new, 1)
+
+old = '''\
+        const Path filePath {fileStorage.file_path(fileIndex)};
+'''
+new = '''\
+#if LIBTORRENT_VERSION_NUM < 20100
+        const Path filePath {fileStorage.file_path(fileIndex)};
+#else
+        const Path filePath {storageData.renamedFiles.file_path(fileStorage, fileIndex)};
+#endif
+'''
+if old not in cpp:
+    if "storageData.renamedFiles.file_path" not in cpp:
+        sys.exit("unable to patch qBittorrent customstorage.cpp: file_path block not found")
+else:
+    cpp = cpp.replace(old, new, 1)
+
+old = '''\
+        lt::file_storage files;
+        lt::aux::vector<lt::download_priority_t, lt::file_index_t> filePriorities;
+'''
+new = '''\
+        lt::file_storage files;
+#if LIBTORRENT_VERSION_NUM >= 20100
+        lt::renamed_files renamedFiles;
+#endif
+        lt::aux::vector<lt::download_priority_t, lt::file_index_t> filePriorities;
+'''
+if old not in header:
+    if "renamedFiles" not in header:
+        sys.exit("unable to patch qBittorrent customstorage.h: StorageData block not found")
+else:
+    header = header.replace(old, new, 1)
+
+for required in [
+    "storageParams.renamed_files",
+    "std::string savePathString",
+    "renamedFiles.rename_file",
+    "storageData.renamedFiles.file_path",
+]:
+    if required not in cpp:
+        sys.exit(f"unable to patch qBittorrent customstorage.cpp: missing {required}")
+
+if "lt::renamed_files renamedFiles;" not in header:
+    sys.exit("unable to patch qBittorrent customstorage.h: missing renamedFiles member")
+if "#include <libtorrent/version.hpp>" not in header:
+    sys.exit("unable to patch qBittorrent customstorage.h: missing libtorrent/version.hpp include")
+
+cpp_path.write_text(cpp)
+header_path.write_text(header)
+PY
+}
+
 build_libtorrent() {
   msg "=== libtorrent-rasterbar ${LT_VER} ==="
   local a="$DL/libtorrent-rasterbar-${LT_VER}.tar.gz"
@@ -1716,6 +1861,7 @@ build_libtorrent() {
     -DBUILD_SHARED_LIBS=OFF \
     -Dstatic_runtime=ON \
     -Dbuild_tests=OFF -Dbuild_examples=OFF -Dbuild_tools=OFF -Dpython-bindings=OFF \
+    -Dwebtorrent=OFF \
     -DOPENSSL_ROOT_DIR="$PREFIX" -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DZLIB_ROOT="$PREFIX"
   cmake_build_install "$b"
@@ -1857,6 +2003,7 @@ build_qbittorrent() {
   rm_rf_safe "$srcdir"
   extract "$a" "$SRC"
   [[ -d "$srcdir" ]] || die "expected qBittorrent source directory not found: $srcdir"
+  apply_qbittorrent_libtorrent21_patch "$srcdir"
 
   local b="$BUILD/qbittorrent-${QBT_VER}"
   rm_rf_safe "$b"
