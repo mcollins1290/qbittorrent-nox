@@ -324,12 +324,7 @@ latest_qt_version() {
 }
 
 latest_boost_version() {
-  latest_version_from_github_release boostorg/boost boost- | python3 -c '
-import re, sys
-text = sys.stdin.read()
-m = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", text)
-print(m.group(1) if m else "")
-'
+  latest_version_from_listing "https://archives.boost.io/release/" 'href="([0-9]+\.[0-9]+\.[0-9]+)/"'
 }
 
 boost_version_underscored() {
@@ -354,15 +349,17 @@ boost_archive_url() {
 }
 
 boost_release_page_sha256() {
-  local ver="$1" archive="$2"
-  curl -fsSL "https://www.boost.org/releases/${ver}/" | python3 -c '
+  local ver="$1" archive="$2" html
+  html="$(curl -fsSL "https://www.boost.org/releases/${ver}/" 2>/dev/null || true)"
+  [[ -n "$html" ]] || return 0
+  python3 -c '
 import re, sys
 archive = re.escape(sys.argv[1])
 html = sys.stdin.read()
 pattern = archive + r".{0,2000}?title=\"([0-9a-fA-F]{64})\""
 m = re.search(pattern, html, re.S)
 print(m.group(1).lower() if m else "")
-' "$archive"
+' "$archive" <<<"$html"
 }
 
 sha256_from_sha256_url() {
@@ -599,6 +596,10 @@ update_pins() {
   boost_ver="$(latest_boost_version)"
   boost_archive="$(boost_archive_name "$boost_ver")"
   boost_sha="$(boost_release_page_sha256 "$boost_ver" "$boost_archive")"
+  if [[ -z "$boost_sha" ]]; then
+    msg "Boost release page sha256 not available; hashing downloaded archive"
+    boost_sha="$(sha256_from_download "$(boost_archive_url "$boost_ver")")"
+  fi
   [[ -n "$boost_ver" && -n "$boost_sha" ]] || die "unable to resolve Boost version/sha256"
 
   msg "Resolved pins"
