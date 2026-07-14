@@ -49,7 +49,7 @@ PREFIX="${PREFIX:-$OUT/${TARGET_TRIPLE}}"
 ARTIFACTS_DIR="${ARTIFACTS_DIR:-$TOP/artifacts}"
 PINS_FILE="${PINS_FILE:-$TOP/dependency-pins.env}"
 
-DEPLOY_HOST="${DEPLOY_HOST:-raspberrypi2.totten}"
+DEPLOY_HOST="${DEPLOY_HOST:-mc-rpi2.duckdns.org}"
 DEPLOY_DIR="${DEPLOY_DIR:-/usr/local/bin}"
 DEPLOY_SERVICE="${DEPLOY_SERVICE:-qbittorrent-nox.service}"
 DEPLOY_RESTART_CMD="${DEPLOY_RESTART_CMD:-systemctl restart ${DEPLOY_SERVICE}}"
