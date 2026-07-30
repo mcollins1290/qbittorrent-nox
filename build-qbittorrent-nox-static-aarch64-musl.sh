@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_NAME="build-qbittorrent-nox-static-aarch64-musl"
 SCRIPT_VERSION="v0.0.45"
 
-TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT:-/opt/gcc-15.3.0-musl-cross}"
+TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT:-/opt/gcc-16.1.0-musl-cross}"
 TARGET_TRIPLE="${TARGET_TRIPLE:-aarch64-linux-musl}"
 SYSROOT="${SYSROOT:-${TOOLCHAIN_ROOT}/${TARGET_TRIPLE}/sysroot}"
 TOP="${TOP:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
