@@ -395,7 +395,25 @@ latest_qt_version() {
 }
 
 latest_boost_version() {
-  latest_version_from_listing "https://archives.boost.io/release/" 'href="([0-9]+\.[0-9]+\.[0-9]+)/"'
+  local html version archive source_html
+  html="$(curl -fsSL "https://archives.boost.io/release/")"
+  while IFS= read -r version; do
+    archive="$(boost_archive_name "$version")"
+    source_html="$(curl -fsSL "https://archives.boost.io/release/${version}/source/" 2>/dev/null || true)"
+    if grep -q "href=\"${archive}\"" <<<"$source_html"; then
+      printf '%s\n' "$version"
+      return 0
+    fi
+  done < <(python3 -c '
+import re, sys
+html = sys.stdin.read()
+versions = sorted(
+    set(re.findall(r"href=\"([0-9]+\.[0-9]+\.[0-9]+)/\"", html)),
+    key=lambda v: tuple(int(p) for p in v.split(".")),
+    reverse=True
+)
+print("\n".join(versions))
+' <<<"$html")
 }
 
 boost_version_underscored() {
@@ -431,6 +449,18 @@ pattern = archive + r".{0,2000}?title=\"([0-9a-fA-F]{64})\""
 m = re.search(pattern, html, re.S)
 print(m.group(1).lower() if m else "")
 ' "$archive" <<<"$html"
+}
+
+boost_archive_json_sha256() {
+  local ver="$1" archive="$2" url
+  url="https://archives.boost.io/release/${ver}/source/${archive}.json"
+  curl -fsSL "$url" 2>/dev/null | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("sha256", "").lower())
+except json.JSONDecodeError:
+    print("")
+'
 }
 
 sha256_from_sha256_url() {
@@ -667,6 +697,9 @@ update_pins() {
   boost_ver="$(latest_boost_version)"
   boost_archive="$(boost_archive_name "$boost_ver")"
   boost_sha="$(boost_release_page_sha256 "$boost_ver" "$boost_archive")"
+  if [[ -z "$boost_sha" ]]; then
+    boost_sha="$(boost_archive_json_sha256 "$boost_ver" "$boost_archive")"
+  fi
   if [[ -z "$boost_sha" ]]; then
     msg "Boost release page sha256 not available; hashing downloaded archive"
     boost_sha="$(sha256_from_download "$(boost_archive_url "$boost_ver")")"
