@@ -76,6 +76,76 @@ msg() { printf "\n\033[1;36m==>\033[0m %s\n" "$*"; }
 die() { printf "\n\033[1;31merror:\033[0m %s\n" "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing dependency: $1"; }
 
+check_command() {
+  local cmd="$1" path
+  path="$(command -v "$cmd" 2>/dev/null || true)"
+  [[ -n "$path" ]] || die "missing dependency: $cmd"
+  printf "  ok  %-18s %s\n" "$cmd" "$path"
+}
+
+check_executable() {
+  local label="$1" path="$2"
+  [[ -x "$path" ]] || die "${label} not executable: ${path}"
+  printf "  ok  %-18s %s\n" "$label" "$path"
+}
+
+check_directory() {
+  local label="$1" path="$2"
+  [[ -d "$path" ]] || die "${label} not found: ${path}"
+  printf "  ok  %-18s %s\n" "$label" "$path"
+}
+
+check_file() {
+  local label="$1" path="$2"
+  [[ -f "$path" ]] || die "${label} not found: ${path}"
+  printf "  ok  %-18s %s\n" "$label" "$path"
+}
+
+check_cross_compiler_v() {
+  local label="$1" path="$2" output
+  check_executable "$label" "$path"
+  if ! output="$("$path" -v 2>&1)"; then
+    die "${label} -v failed"
+  fi
+  [[ -n "$output" ]] || die "${label} -v produced no output"
+  grep -q "Target: ${TARGET_TRIPLE}" <<<"$output" || die "${label} -v did not report Target: ${TARGET_TRIPLE}"
+  grep -Eq "(gcc version|clang version|GNU)" <<<"$output" || die "${label} -v output did not look like compiler version output"
+  printf "  ok  %-18s -v output valid\n" "${label}"
+}
+
+check_prereqs() {
+  local tool cross_prefix
+
+  msg "Checking required local tools"
+  for tool in python3 curl tar cmake ninja perl pkg-config make g++ file readelf sha256sum; do
+    check_command "$tool"
+  done
+
+  if [[ "$DO_DEPLOY" == "1" || "$DO_DEPLOY_ONLY" == "1" ]]; then
+    msg "Checking deployment tools"
+    check_command rsync
+    check_command ssh
+  fi
+
+  msg "Checking required paths"
+  check_directory TOOLCHAIN_ROOT "$TOOLCHAIN_ROOT"
+  check_directory SYSROOT "$SYSROOT"
+  check_file TOOLCHAIN_FILE "$TOOLCHAIN_FILE"
+  check_executable HOST_CC "$HOST_CC"
+  check_executable HOST_CXX "$HOST_CXX"
+  check_directory OPENSSL_SYSTEM_DIR "$OPENSSL_SYSTEM_DIR"
+
+  msg "Checking cross toolchain executables"
+  cross_prefix="${TOOLCHAIN_ROOT}/bin/${TARGET_TRIPLE}"
+  check_cross_compiler_v "cross gcc" "${cross_prefix}-gcc"
+  check_cross_compiler_v "cross g++" "${cross_prefix}-g++"
+  check_executable "cross ar" "${cross_prefix}-ar"
+  check_executable "cross ranlib" "${cross_prefix}-ranlib"
+  check_executable "cross strip" "${cross_prefix}-strip"
+
+  msg "Prerequisite check complete."
+}
+
 if [[ "${FORCE_COLOR:-0}" == "1" || (-t 1 && "${NO_COLOR:-0}" != "1") ]]; then
   C_RESET=$'\033[0m'
   C_GREEN=$'\033[1;32m'
@@ -158,10 +228,11 @@ ${SCRIPT_NAME} ${SCRIPT_VERSION}
 
 Usage:
   $0 [--clean] [--rebuild] [--distclean] [--force-deps] [--qbittorrent-only]
-     [--check-updates] [--update-pins] [--deploy] [--deploy-only]
+     [--check-prereqs] [--check-updates] [--update-pins] [--deploy] [--deploy-only]
      [--no-strip] [--yes] [--jobs N] [--help]
 
 Modes:
+  --check-prereqs      Validate local tools, paths, and cross compiler -v output, then exit
   --check-updates       Report newer dependency releases and exit
   --check-update        Alias for --check-updates
   --update-pins         Update pinned dependency versions/sha256 values and exit
@@ -176,7 +247,7 @@ Environment:
   ASSUME_YES=1          Start the build without prompting
   SKIP_EXISTING=0       Rebuild prerequisites instead of skipping current stamps
   TRUST_UNSTAMPED_DEPS=1 Treat existing unstamped prerequisite files as reusable
-  DEPLOY_HOST=host      SSH host for deployment (default: raspberrypi2.totten)
+  DEPLOY_HOST=host      SSH host for deployment (default: mc-rpi2.duckdns.org)
   DEPLOY_DIR=path       Remote install directory (default: /usr/local/bin)
   DEPLOY_SERVICE=name   Remote systemd service to restart (default: qbittorrent-nox.service)
   DEPLOY_RESTART_CMD=cmd Remote restart command (default: systemctl restart DEPLOY_SERVICE)
@@ -766,6 +837,7 @@ DO_REBUILD=0
 DO_DISTCLEAN=0
 DO_QBT_ONLY=0
 DO_CLEAN_BEFORE_BUILD=0
+DO_CHECK_PREREQS=0
 DO_CHECK_UPDATES=0
 DO_UPDATE_PINS=0
 DO_DEPLOY=0
@@ -778,6 +850,7 @@ while [[ $# -gt 0 ]]; do
     --distclean) DO_DISTCLEAN=1; shift ;;
     --force-deps) SKIP_EXISTING=0; shift ;;
     --qbittorrent-only) DO_QBT_ONLY=1; shift ;;
+    --check-prereqs) DO_CHECK_PREREQS=1; shift ;;
     --check-updates|--check-update) DO_CHECK_UPDATES=1; shift ;;
     --update-pins) DO_UPDATE_PINS=1; shift ;;
     --deploy) DO_DEPLOY=1; shift ;;
@@ -808,21 +881,27 @@ if [[ "$DO_DEPLOY" == "1" ]]; then
   msg "Deploy restart: ${DEPLOY_RESTART_CMD}"
 fi
 
-need python3
+if [[ "$DO_CHECK_PREREQS" == "1" ]]; then
+  check_prereqs
+  exit 0
+fi
 
 if [[ "$DO_DEPLOY_ONLY" == "1" ]]; then
+  need python3
   deploy_artifact
   msg "Deploy complete."
   exit 0
 fi
 
 if [[ "$DO_CHECK_UPDATES" == "1" ]]; then
+  need python3
   need curl
   check_updates
   exit 0
 fi
 
 if [[ "$DO_UPDATE_PINS" == "1" ]]; then
+  need python3
   need curl
   need sha256sum
   update_pins
@@ -841,15 +920,7 @@ if [[ "$DO_CLEAN" == "1" && "$DO_REBUILD" != "1" ]]; then
   exit 0
 fi
 
-need curl
-need tar; need cmake; need ninja; need perl; need pkg-config; need make
-need g++; need file; need readelf; need sha256sum
-
-[[ -x "${TOOLCHAIN_ROOT}/bin/${TARGET_TRIPLE}-gcc" ]] || die "cross gcc not found"
-[[ -d "$SYSROOT" ]] || die "SYSROOT not found: $SYSROOT"
-[[ -f "$TOOLCHAIN_FILE" ]] || die "TOOLCHAIN_FILE not found: $TOOLCHAIN_FILE"
-[[ -x "$HOST_CC" ]] || die "HOST_CC not executable: $HOST_CC"
-[[ -x "$HOST_CXX" ]] || die "HOST_CXX not executable: $HOST_CXX"
+check_prereqs
 
 resolve_qbittorrent_version
 msg "qBittorrent tag: ${QBT_TAG}"
