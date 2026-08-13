@@ -3,19 +3,35 @@ set -euo pipefail
 
 ###############################################################################
 # build-qbittorrent-nox-static-aarch64-musl
-# SCRIPT_VERSION: v0.0.45
-#
-# Changes vs v0.0.44:
-# - Use Boost official release archives/checksums instead of GitHub b2-nodocs assets.
+# SCRIPT_VERSION is derived from the git commit when available.
 ###############################################################################
 
 SCRIPT_NAME="build-qbittorrent-nox-static-aarch64-musl"
-SCRIPT_VERSION="v0.0.45"
+TOP="${TOP:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
+
+script_version() {
+  local rev="" dirty=""
+
+  if command -v git >/dev/null 2>&1; then
+    rev="$(git -C "$TOP" rev-parse --short=12 HEAD 2>/dev/null || true)"
+    if [[ -n "$rev" ]]; then
+      if ! git -C "$TOP" diff --quiet --ignore-submodules HEAD -- 2>/dev/null \
+        || ! git -C "$TOP" diff --cached --quiet --ignore-submodules -- 2>/dev/null; then
+        dirty="-dirty"
+      fi
+      printf 'git:%s%s\n' "$rev" "$dirty"
+      return
+    fi
+  fi
+
+  printf 'source\n'
+}
+
+SCRIPT_VERSION="${SCRIPT_VERSION:-$(script_version)}"
 
 TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT:-/opt/gcc-16.1.0-musl-cross}"
 TARGET_TRIPLE="${TARGET_TRIPLE:-aarch64-linux-musl}"
 SYSROOT="${SYSROOT:-${TOOLCHAIN_ROOT}/${TARGET_TRIPLE}/sysroot}"
-TOP="${TOP:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)}"
 TOOLCHAIN_FILE="${TOOLCHAIN_FILE:-$TOP/toolchains/aarch64-musl-pi4.cmake}"
 
 HOST_CC="${HOST_CC:-/usr/bin/gcc}"
