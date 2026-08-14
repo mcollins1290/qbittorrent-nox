@@ -256,8 +256,8 @@ Modes:
   --update-pins         Update pinned dependency versions/sha256 values and exit
   --deploy              Deploy artifact after a successful build and restart service
   --deploy-only         Deploy existing artifact and restart service without building
-  --build-tests         Build qBittorrent's test executables for the target
-  --run-tests-remote    Build tests, copy them to DEPLOY_HOST under /tmp, and run them there
+  --build-tests         Also build qBittorrent's test executables in a separate build dir
+  --run-tests-remote    Build tests separately, copy them to DEPLOY_HOST under /tmp, and run them there
 
 Environment:
   QBT_VER=latest        Resolve and build the latest qBittorrent GitHub release tag
@@ -878,7 +878,9 @@ offer_deploy_after_build() {
 
   case "$answer" in
     [Yy]|[Yy][Ee][Ss])
-      deploy_artifact 0
+      if ensure_tests_passed_before_deploy; then
+        deploy_artifact 0
+      fi
       ;;
     *)
       msg "Deploy skipped."
@@ -895,7 +897,7 @@ qbittorrent_test_names() {
 }
 
 run_qbittorrent_tests_remote() {
-  local build_dir="$BUILD/qbittorrent-${QBT_VER}"
+  local build_dir="$BUILD/qbittorrent-${QBT_VER}-tests"
   local test_data_dir="$SRC/qbittorrent-${QBT_VER}/test/testdata"
   local remote_dir="" runner="" runner_name="" status=0 remote_test_data_created=0
   local -a tests=() runnable_tests=() test_paths=() skipped_tests=()
@@ -988,7 +990,73 @@ run_qbittorrent_tests_remote() {
     die "qBittorrent remote tests failed"
   fi
 
+  TESTS_PASSED=1
   msg "qBittorrent remote tests passed."
+}
+
+offer_remote_tests_after_build() {
+  local answer=""
+  [[ "$DO_BUILD_TESTS" == "0" ]] || return 0
+  [[ "$DO_RUN_TESTS_REMOTE" == "0" ]] || return 0
+  [[ "$ASSUME_YES" == "0" ]] || return 0
+
+  printf "\nBuild completed successfully. Build qBittorrent tests and run them on %s before deploy? [y/N] " \
+    "$DEPLOY_HOST"
+  if ! read -r answer; then
+    die "unable to read remote test selection"
+  fi
+
+  case "$answer" in
+    [Yy]|[Yy][Ee][Ss])
+      DO_BUILD_TESTS=1
+      DO_RUN_TESTS_REMOTE=1
+      build_qbittorrent_tests
+      run_qbittorrent_tests_remote
+      ;;
+    *)
+      msg "Remote tests skipped."
+      ;;
+  esac
+}
+
+ensure_tests_passed_before_deploy() {
+  local answer=""
+
+  if [[ "$TESTS_PASSED" == "1" ]]; then
+    return 0
+  fi
+
+  if [[ "$ASSUME_YES" == "1" || "$DO_DEPLOY" == "1" ]]; then
+    msg "Deployment requires a passed qBittorrent remote test run."
+    DO_BUILD_TESTS=1
+    DO_RUN_TESTS_REMOTE=1
+    if [[ "$TESTS_BUILT" == "0" ]]; then
+      build_qbittorrent_tests
+    fi
+    run_qbittorrent_tests_remote
+    return 0
+  fi
+
+  printf "\nDeployment requires a passed qBittorrent remote test run. Build tests and run them on %s now? [Y/n] " \
+    "$DEPLOY_HOST"
+  if ! read -r answer; then
+    die "unable to read remote test confirmation"
+  fi
+
+  case "$answer" in
+    ""|[Yy]|[Yy][Ee][Ss])
+      DO_BUILD_TESTS=1
+      DO_RUN_TESTS_REMOTE=1
+      if [[ "$TESTS_BUILT" == "0" ]]; then
+        build_qbittorrent_tests
+      fi
+      run_qbittorrent_tests_remote
+      ;;
+    *)
+      msg "Deploy skipped; remote tests were not run."
+      return 1
+      ;;
+  esac
 }
 
 ORIGINAL_ARGC=$#
@@ -1004,6 +1072,8 @@ DO_DEPLOY=0
 DO_DEPLOY_ONLY=0
 DO_BUILD_TESTS=0
 DO_RUN_TESTS_REMOTE=0
+TESTS_BUILT=0
+TESTS_PASSED=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -1041,7 +1111,7 @@ msg "Jobs: ${JOBS}"
 msg "Strip: ${STRIP_BIN}"
 msg "OpenSSL OPENSSLDIR: ${OPENSSL_SYSTEM_DIR}"
 if [[ "$DO_BUILD_TESTS" == "1" ]]; then
-  msg "qBittorrent tests: build enabled"
+  msg "qBittorrent tests: separate test build enabled"
 fi
 if [[ "$DO_RUN_TESTS_REMOTE" == "1" ]]; then
   msg "Remote test target: ${DEPLOY_HOST}:${REMOTE_TEST_PARENT}"
@@ -2241,15 +2311,11 @@ build_qbittorrent() {
   local a="$DL/qbittorrent-${QBT_VER}.tar.xz"
   local srcdir="$SRC/qbittorrent-${QBT_VER}"
   local bin="$PREFIX/bin/qbittorrent-nox"
-  local testing="OFF"
   fetch "$QBT_URL" "$a" "$QBT_SHA256"
   rm_rf_safe "$srcdir"
   extract "$a" "$SRC"
   [[ -d "$srcdir" ]] || die "expected qBittorrent source directory not found: $srcdir"
   apply_qbittorrent_libtorrent21_patch "$srcdir"
-  if [[ "$DO_BUILD_TESTS" == "1" ]]; then
-    testing="ON"
-  fi
 
   local b="$BUILD/qbittorrent-${QBT_VER}"
   rm_rf_safe "$b"
@@ -2260,10 +2326,31 @@ build_qbittorrent() {
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=OFF \
-    -DGUI=OFF -DWEBUI=ON -DSTACKTRACE=OFF -DTESTING="$testing" \
+    -DGUI=OFF -DWEBUI=ON -DSTACKTRACE=OFF -DTESTING=OFF \
     -DOPENSSL_ROOT_DIR="$PREFIX" -DOPENSSL_USE_STATIC_LIBS=TRUE \
     -DZLIB_ROOT="$PREFIX"
   cmake_build_install "$b"
+}
+
+build_qbittorrent_tests() {
+  msg "=== qBittorrent ${QBT_VER} (${QBT_TAG}, target tests) ==="
+  local srcdir="$SRC/qbittorrent-${QBT_VER}"
+  local b="$BUILD/qbittorrent-${QBT_VER}-tests"
+
+  [[ -d "$srcdir" ]] || die "qBittorrent source directory not found for tests: $srcdir"
+
+  rm_rf_safe "$b"
+  cmake_cfg "$srcdir" "$b" \
+    -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN_FILE" \
+    -DSTAGING_PREFIX="$PREFIX" \
+    -DCMAKE_INSTALL_PREFIX="$PREFIX" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGUI=OFF -DWEBUI=ON -DSTACKTRACE=OFF -DTESTING=ON \
+    -DOPENSSL_ROOT_DIR="$PREFIX" -DOPENSSL_USE_STATIC_LIBS=TRUE \
+    -DZLIB_ROOT="$PREFIX"
+  cmake --build "$b" --parallel "$JOBS"
+  TESTS_BUILT=1
 }
 
 verify_static() {
@@ -2367,12 +2454,17 @@ fi
 
 build_qbittorrent
 verify_static
+if [[ "$DO_BUILD_TESTS" == "1" ]]; then
+  build_qbittorrent_tests
+fi
 if [[ "$DO_RUN_TESTS_REMOTE" == "1" ]]; then
   run_qbittorrent_tests_remote
 fi
 if [[ "$DO_DEPLOY" == "1" ]]; then
+  ensure_tests_passed_before_deploy
   deploy_artifact
 fi
+offer_remote_tests_after_build
 offer_deploy_after_build
 
 msg "All done."
