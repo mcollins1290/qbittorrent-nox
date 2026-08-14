@@ -29,7 +29,7 @@ script_version() {
 
 SCRIPT_VERSION="${SCRIPT_VERSION:-$(script_version)}"
 
-TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT:-/opt/gcc-16.1.0-musl-cross}"
+TOOLCHAIN_ROOT="${TOOLCHAIN_ROOT:-/opt/gcc-16.2.0-musl-cross}"
 TARGET_TRIPLE="${TARGET_TRIPLE:-aarch64-linux-musl}"
 SYSROOT="${SYSROOT:-${TOOLCHAIN_ROOT}/${TARGET_TRIPLE}/sysroot}"
 TOOLCHAIN_FILE="${TOOLCHAIN_FILE:-$TOP/toolchains/aarch64-musl-pi4.cmake}"
