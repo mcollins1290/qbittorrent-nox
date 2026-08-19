@@ -1800,7 +1800,16 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 
-replacements = [
+def replace_or_accept(old, new, *accepted):
+    global text
+    if new in text or any(candidate in text for candidate in accepted):
+        return
+    if old in text:
+        text = text.replace(old, new)
+        return
+    sys.exit(f"unable to patch QtBase X509 const-correctness: {old}")
+
+for old_text, new_text, *accepted in [
     (
         "QByteArray asn1ObjectId(ASN1_OBJECT *object)",
         "QByteArray asn1ObjectId(const ASN1_OBJECT *object)",
@@ -1819,34 +1828,36 @@ replacements = [
     ),
     (
         "QVariant x509UnknownExtensionToValue(X509_EXTENSION *ext)",
-        "QVariant x509UnknownExtensionToValue(const X509_EXTENSION *ext)",
+        "QVariant x509UnknownExtensionToValue(QT_OPENSSL4_CONST X509_EXTENSION *ext)",
+        "QVariant x509UnknownExtensionToValue(QT_OPENSSL4_CONST X509_EXTENSION *ext)",
     ),
     (
         "        ASN1_OCTET_STRING *value = q_X509_EXTENSION_get_data(ext);",
-        "        const ASN1_OCTET_STRING *value = q_X509_EXTENSION_get_data(ext);",
+        "        QT_OPENSSL4_CONST ASN1_OCTET_STRING *value = q_X509_EXTENSION_get_data(ext);",
+        "        QT_OPENSSL4_CONST ASN1_OCTET_STRING *value = q_X509_EXTENSION_get_data(ext);",
     ),
     (
         "QVariant x509ExtensionToValue(X509_EXTENSION *ext)",
-        "QVariant x509ExtensionToValue(const X509_EXTENSION *ext)",
+        "QVariant x509ExtensionToValue(QT_OPENSSL4_CONST X509_EXTENSION *ext)",
+        "QVariant x509ExtensionToValue(QT_OPENSSL4_CONST X509_EXTENSION *ext)",
     ),
     (
         "    ASN1_OBJECT *obj = q_X509_EXTENSION_get_object(ext);",
-        "    const ASN1_OBJECT *obj = q_X509_EXTENSION_get_object(ext);",
+        "    QT_OPENSSL4_CONST ASN1_OBJECT *obj = q_X509_EXTENSION_get_object(ext);",
+        "    QT_OPENSSL4_CONST ASN1_OBJECT *obj = q_X509_EXTENSION_get_object(ext);",
     ),
     (
         "        X509_EXTENSION *ext = q_X509_get_ext(x509, i);",
-        "        const X509_EXTENSION *ext = q_X509_get_ext(x509, i);",
+        "        QT_OPENSSL4_CONST X509_EXTENSION *ext = q_X509_get_ext(x509, i);",
+        "        QT_OPENSSL4_CONST X509_EXTENSION *ext = q_X509_get_ext(x509, i);",
     ),
     (
         "X509CertificateBase::X509CertificateExtension X509CertificateOpenSSL::convertExtension(X509_EXTENSION *ext)",
-        "X509CertificateBase::X509CertificateExtension X509CertificateOpenSSL::convertExtension(const X509_EXTENSION *ext)",
+        "X509CertificateBase::X509CertificateExtension X509CertificateOpenSSL::convertExtension(QT_OPENSSL4_CONST X509_EXTENSION *ext)",
+        "X509CertificateBase::X509CertificateExtension X509CertificateOpenSSL::convertExtension(QT_OPENSSL4_CONST X509_EXTENSION *ext)",
     ),
-]
-
-for old_text, new_text in replacements:
-    if old_text not in text:
-        sys.exit(f"unable to patch QtBase X509 const-correctness: {old_text}")
-    text = text.replace(old_text, new_text)
+]:
+    replace_or_accept(old_text, new_text, *accepted)
 
 old = '''\
             // keyid
@@ -1865,8 +1876,10 @@ new = '''\
             }
 '''
 if old not in text:
-    sys.exit("unable to patch QtBase authority key identifier handling")
-text = text.replace(old, new, 1)
+    if "q_ASN1_STRING_get0_data(auth_key->keyid)" not in text or "q_ASN1_STRING_length(auth_key->keyid)" not in text:
+        sys.exit("unable to patch QtBase authority key identifier handling")
+else:
+    text = text.replace(old, new, 1)
 
 old = '''\
             QHostAddress ipAddress;
@@ -1896,8 +1909,10 @@ new = '''\
             }
 '''
 if old not in text:
-    sys.exit("unable to patch QtBase IP subject alternative name handling")
-text = text.replace(old, new, 1)
+    if "q_ASN1_STRING_get0_data(genName->d.iPAddress)" not in text:
+        sys.exit("unable to patch QtBase IP subject alternative name handling")
+else:
+    text = text.replace(old, new, 1)
 
 old = '''\
     if (ASN1_INTEGER *serialNumber = q_X509_get_serialNumber(x509)) {
@@ -1926,8 +1941,10 @@ new = '''\
     }
 '''
 if old not in text:
-    sys.exit("unable to patch QtBase certificate serial number handling")
-text = text.replace(old, new, 1)
+    if "q_ASN1_STRING_get0_data(serialNumber)" not in text or "q_ASN1_STRING_length(serialNumber)" not in text:
+        sys.exit("unable to patch QtBase certificate serial number handling")
+else:
+    text = text.replace(old, new, 1)
 
 path.write_text(text)
 PY
@@ -1939,29 +1956,34 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 
-replacements = [
+def replace_or_accept(old, new, *accepted):
+    global text
+    if new in text or any(candidate in text for candidate in accepted):
+        return
+    if old in text:
+        text = text.replace(old, new)
+        return
+    sys.exit(f"unable to patch QtBase OpenSSL symbol declaration: {old}")
+
+for old_text, new_text, *accepted in [
     ("int q_ASN1_STRING_length(ASN1_STRING *a);", "int q_ASN1_STRING_length(const ASN1_STRING *a);"),
     ("int q_ASN1_STRING_to_UTF8(unsigned char **a, ASN1_STRING *b);", "int q_ASN1_STRING_to_UTF8(unsigned char **a, const ASN1_STRING *b);"),
     ("int q_i2t_ASN1_OBJECT(char *buf, int buf_len, ASN1_OBJECT *obj);", "int q_i2t_ASN1_OBJECT(char *buf, int buf_len, const ASN1_OBJECT *obj);"),
     ("int q_OBJ_obj2txt(char *buf, int buf_len, ASN1_OBJECT *obj, int no_name);", "int q_OBJ_obj2txt(char *buf, int buf_len, const ASN1_OBJECT *obj, int no_name);"),
-    ("ASN1_OBJECT *q_X509_EXTENSION_get_object(X509_EXTENSION *a);", "const ASN1_OBJECT *q_X509_EXTENSION_get_object(const X509_EXTENSION *a);"),
-    ("X509_EXTENSION *q_X509_get_ext(X509 *a, int b);", "const X509_EXTENSION *q_X509_get_ext(X509 *a, int b);"),
-    ("const X509V3_EXT_METHOD *q_X509V3_EXT_get(X509_EXTENSION *a);", "const X509V3_EXT_METHOD *q_X509V3_EXT_get(const X509_EXTENSION *a);"),
-    ("void *q_X509V3_EXT_d2i(X509_EXTENSION *a);", "void *q_X509V3_EXT_d2i(const X509_EXTENSION *a);"),
+    ("ASN1_OBJECT *q_X509_EXTENSION_get_object(X509_EXTENSION *a);", "QT_OPENSSL4_CONST ASN1_OBJECT *q_X509_EXTENSION_get_object(QT_OPENSSL4_CONST X509_EXTENSION *a);", "QT_OPENSSL4_CONST ASN1_OBJECT *q_X509_EXTENSION_get_object(QT_OPENSSL4_CONST X509_EXTENSION *a);"),
+    ("X509_EXTENSION *q_X509_get_ext(X509 *a, int b);", "QT_OPENSSL4_CONST X509_EXTENSION *q_X509_get_ext(X509 *a, int b);", "QT_OPENSSL4_CONST X509_EXTENSION *q_X509_get_ext(X509 *a, int b);"),
+    ("const X509V3_EXT_METHOD *q_X509V3_EXT_get(X509_EXTENSION *a);", "const X509V3_EXT_METHOD *q_X509V3_EXT_get(QT_OPENSSL4_CONST X509_EXTENSION *a);", "const X509V3_EXT_METHOD *q_X509V3_EXT_get(QT_OPENSSL4_CONST X509_EXTENSION *a);"),
+    ("void *q_X509V3_EXT_d2i(X509_EXTENSION *a);", "void *q_X509V3_EXT_d2i(QT_OPENSSL4_CONST X509_EXTENSION *a);", "void *q_X509V3_EXT_d2i(QT_OPENSSL4_CONST X509_EXTENSION *a);"),
     ("int q_X509_EXTENSION_get_critical(X509_EXTENSION *a);", "int q_X509_EXTENSION_get_critical(const X509_EXTENSION *a);"),
-    ("ASN1_OCTET_STRING *q_X509_EXTENSION_get_data(X509_EXTENSION *a);", "const ASN1_OCTET_STRING *q_X509_EXTENSION_get_data(const X509_EXTENSION *a);"),
-    ("X509_NAME *q_X509_get_issuer_name(X509 *a);", "const X509_NAME *q_X509_get_issuer_name(X509 *a);"),
-    ("X509_NAME *q_X509_get_subject_name(X509 *a);", "const X509_NAME *q_X509_get_subject_name(X509 *a);"),
+    ("ASN1_OCTET_STRING *q_X509_EXTENSION_get_data(X509_EXTENSION *a);", "QT_OPENSSL4_CONST ASN1_OCTET_STRING *q_X509_EXTENSION_get_data(QT_OPENSSL4_CONST X509_EXTENSION *a);", "QT_OPENSSL4_CONST ASN1_OCTET_STRING *q_X509_EXTENSION_get_data(QT_OPENSSL4_CONST X509_EXTENSION *a);"),
+    ("X509_NAME *q_X509_get_issuer_name(X509 *a);", "QT_OPENSSL4_CONST X509_NAME *q_X509_get_issuer_name(X509 *a);", "QT_OPENSSL4_CONST X509_NAME *q_X509_get_issuer_name(X509 *a);"),
+    ("X509_NAME *q_X509_get_subject_name(X509 *a);", "QT_OPENSSL4_CONST X509_NAME *q_X509_get_subject_name(X509 *a);", "QT_OPENSSL4_CONST X509_NAME *q_X509_get_subject_name(X509 *a);"),
     ("int q_X509_NAME_entry_count(X509_NAME *a);", "int q_X509_NAME_entry_count(const X509_NAME *a);"),
-    ("X509_NAME_ENTRY *q_X509_NAME_get_entry(X509_NAME *a,int b);", "const X509_NAME_ENTRY *q_X509_NAME_get_entry(const X509_NAME *a,int b);"),
-    ("ASN1_STRING *q_X509_NAME_ENTRY_get_data(X509_NAME_ENTRY *a);", "const ASN1_STRING *q_X509_NAME_ENTRY_get_data(const X509_NAME_ENTRY *a);"),
-    ("ASN1_OBJECT *q_X509_NAME_ENTRY_get_object(X509_NAME_ENTRY *a);", "const ASN1_OBJECT *q_X509_NAME_ENTRY_get_object(const X509_NAME_ENTRY *a);"),
-]
-
-for old_text, new_text in replacements:
-    if old_text not in text:
-        sys.exit(f"unable to patch QtBase OpenSSL symbol declaration: {old_text}")
-    text = text.replace(old_text, new_text)
+    ("X509_NAME_ENTRY *q_X509_NAME_get_entry(X509_NAME *a,int b);", "QT_OPENSSL4_CONST X509_NAME_ENTRY *q_X509_NAME_get_entry(const X509_NAME *a, int b);", "QT_OPENSSL4_CONST X509_NAME_ENTRY *q_X509_NAME_get_entry(const X509_NAME *a, int b);"),
+    ("ASN1_STRING *q_X509_NAME_ENTRY_get_data(X509_NAME_ENTRY *a);", "QT_OPENSSL4_CONST ASN1_STRING *q_X509_NAME_ENTRY_get_data(const X509_NAME_ENTRY *a);", "QT_OPENSSL4_CONST ASN1_STRING *q_X509_NAME_ENTRY_get_data(const X509_NAME_ENTRY *a);"),
+    ("ASN1_OBJECT *q_X509_NAME_ENTRY_get_object(X509_NAME_ENTRY *a);", "QT_OPENSSL4_CONST ASN1_OBJECT *q_X509_NAME_ENTRY_get_object(const X509_NAME_ENTRY *a);", "QT_OPENSSL4_CONST ASN1_OBJECT *q_X509_NAME_ENTRY_get_object(const X509_NAME_ENTRY *a);"),
+]:
+    replace_or_accept(old_text, new_text, *accepted)
 
 path.write_text(text)
 PY
@@ -1974,10 +1996,12 @@ path = Path(sys.argv[1])
 text = path.read_text()
 
 old_text = "    static X509CertificateExtension convertExtension(X509_EXTENSION *ext);"
-new_text = "    static X509CertificateExtension convertExtension(const X509_EXTENSION *ext);"
+new_text = "    static X509CertificateExtension convertExtension(QT_OPENSSL4_CONST X509_EXTENSION *ext);"
 if old_text not in text:
-    sys.exit("unable to patch QtBase X509 extension declaration")
-text = text.replace(old_text, new_text)
+    if "    static X509CertificateExtension convertExtension(QT_OPENSSL4_CONST X509_EXTENSION *ext);" not in text:
+        sys.exit("unable to patch QtBase X509 extension declaration")
+else:
+    text = text.replace(old_text, new_text)
 
 path.write_text(text)
 PY
@@ -1989,29 +2013,34 @@ import sys
 path = Path(sys.argv[1])
 text = path.read_text()
 
-replacements = [
+def replace_or_accept(old, new, *accepted):
+    global text
+    if new in text or any(candidate in text for candidate in accepted):
+        return
+    if old in text:
+        text = text.replace(old, new)
+        return
+    sys.exit(f"unable to patch QtBase OpenSSL symbol definition: {old}")
+
+for old_text, new_text, *accepted in [
     ("DEFINEFUNC(int, ASN1_STRING_length, ASN1_STRING *a, a, return 0, return)", "DEFINEFUNC(int, ASN1_STRING_length, const ASN1_STRING *a, a, return 0, return)"),
     ("DEFINEFUNC2(int, ASN1_STRING_to_UTF8, unsigned char **a, a, ASN1_STRING *b, b, return 0, return)", "DEFINEFUNC2(int, ASN1_STRING_to_UTF8, unsigned char **a, a, const ASN1_STRING *b, b, return 0, return)"),
     ("DEFINEFUNC3(int, i2t_ASN1_OBJECT, char *a, a, int b, b, ASN1_OBJECT *c, c, return -1, return)", "DEFINEFUNC3(int, i2t_ASN1_OBJECT, char *a, a, int b, b, const ASN1_OBJECT *c, c, return -1, return)"),
     ("DEFINEFUNC4(int, OBJ_obj2txt, char *a, a, int b, b, ASN1_OBJECT *c, c, int d, d, return -1, return)", "DEFINEFUNC4(int, OBJ_obj2txt, char *a, a, int b, b, const ASN1_OBJECT *c, c, int d, d, return -1, return)"),
-    ("DEFINEFUNC(ASN1_OBJECT *, X509_EXTENSION_get_object, X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(const ASN1_OBJECT *, X509_EXTENSION_get_object, const X509_EXTENSION *a, a, return nullptr, return)"),
-    ("DEFINEFUNC2(X509_EXTENSION *, X509_get_ext, X509 *a, a, int b, b, return nullptr, return)", "DEFINEFUNC2(const X509_EXTENSION *, X509_get_ext, X509 *a, a, int b, b, return nullptr, return)"),
-    ("DEFINEFUNC(const X509V3_EXT_METHOD *, X509V3_EXT_get, X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(const X509V3_EXT_METHOD *, X509V3_EXT_get, const X509_EXTENSION *a, a, return nullptr, return)"),
-    ("DEFINEFUNC(void *, X509V3_EXT_d2i, X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(void *, X509V3_EXT_d2i, const X509_EXTENSION *a, a, return nullptr, return)"),
+    ("DEFINEFUNC(ASN1_OBJECT *, X509_EXTENSION_get_object, X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST ASN1_OBJECT *, X509_EXTENSION_get_object, QT_OPENSSL4_CONST X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST ASN1_OBJECT *, X509_EXTENSION_get_object, QT_OPENSSL4_CONST X509_EXTENSION *a, a, return nullptr, return)"),
+    ("DEFINEFUNC2(X509_EXTENSION *, X509_get_ext, X509 *a, a, int b, b, return nullptr, return)", "DEFINEFUNC2(QT_OPENSSL4_CONST X509_EXTENSION *, X509_get_ext, X509 *a, a, int b, b, return nullptr, return)", "DEFINEFUNC2(QT_OPENSSL4_CONST X509_EXTENSION *, X509_get_ext, X509 *a, a, int b, b, return nullptr, return)"),
+    ("DEFINEFUNC(const X509V3_EXT_METHOD *, X509V3_EXT_get, X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(const X509V3_EXT_METHOD *, X509V3_EXT_get, QT_OPENSSL4_CONST X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(const X509V3_EXT_METHOD *, X509V3_EXT_get, QT_OPENSSL4_CONST X509_EXTENSION *a, a, return nullptr, return)"),
+    ("DEFINEFUNC(void *, X509V3_EXT_d2i, X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(void *, X509V3_EXT_d2i, QT_OPENSSL4_CONST X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(void *, X509V3_EXT_d2i, QT_OPENSSL4_CONST X509_EXTENSION *a, a, return nullptr, return)"),
     ("DEFINEFUNC(int, X509_EXTENSION_get_critical, X509_EXTENSION *a, a, return 0, return)", "DEFINEFUNC(int, X509_EXTENSION_get_critical, const X509_EXTENSION *a, a, return 0, return)"),
-    ("DEFINEFUNC(ASN1_OCTET_STRING *, X509_EXTENSION_get_data, X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(const ASN1_OCTET_STRING *, X509_EXTENSION_get_data, const X509_EXTENSION *a, a, return nullptr, return)"),
-    ("DEFINEFUNC(X509_NAME *, X509_get_issuer_name, X509 *a, a, return nullptr, return)", "DEFINEFUNC(const X509_NAME *, X509_get_issuer_name, X509 *a, a, return nullptr, return)"),
-    ("DEFINEFUNC(X509_NAME *, X509_get_subject_name, X509 *a, a, return nullptr, return)", "DEFINEFUNC(const X509_NAME *, X509_get_subject_name, X509 *a, a, return nullptr, return)"),
+    ("DEFINEFUNC(ASN1_OCTET_STRING *, X509_EXTENSION_get_data, X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST ASN1_OCTET_STRING *, X509_EXTENSION_get_data, QT_OPENSSL4_CONST X509_EXTENSION *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST ASN1_OCTET_STRING *, X509_EXTENSION_get_data, QT_OPENSSL4_CONST X509_EXTENSION *a, a, return nullptr, return)"),
+    ("DEFINEFUNC(X509_NAME *, X509_get_issuer_name, X509 *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST X509_NAME *, X509_get_issuer_name, X509 *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST X509_NAME *, X509_get_issuer_name, X509 *a, a, return nullptr, return)"),
+    ("DEFINEFUNC(X509_NAME *, X509_get_subject_name, X509 *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST X509_NAME *, X509_get_subject_name, X509 *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST X509_NAME *, X509_get_subject_name, X509 *a, a, return nullptr, return)"),
     ("DEFINEFUNC(int, X509_NAME_entry_count, X509_NAME *a, a, return 0, return)", "DEFINEFUNC(int, X509_NAME_entry_count, const X509_NAME *a, a, return 0, return)"),
-    ("DEFINEFUNC2(X509_NAME_ENTRY *, X509_NAME_get_entry, X509_NAME *a, a, int b, b, return nullptr, return)", "DEFINEFUNC2(const X509_NAME_ENTRY *, X509_NAME_get_entry, const X509_NAME *a, a, int b, b, return nullptr, return)"),
-    ("DEFINEFUNC(ASN1_STRING *, X509_NAME_ENTRY_get_data, X509_NAME_ENTRY *a, a, return nullptr, return)", "DEFINEFUNC(const ASN1_STRING *, X509_NAME_ENTRY_get_data, const X509_NAME_ENTRY *a, a, return nullptr, return)"),
-    ("DEFINEFUNC(ASN1_OBJECT *, X509_NAME_ENTRY_get_object, X509_NAME_ENTRY *a, a, return nullptr, return)", "DEFINEFUNC(const ASN1_OBJECT *, X509_NAME_ENTRY_get_object, const X509_NAME_ENTRY *a, a, return nullptr, return)"),
-]
-
-for old_text, new_text in replacements:
-    if old_text not in text:
-        sys.exit(f"unable to patch QtBase OpenSSL symbol definition: {old_text}")
-    text = text.replace(old_text, new_text)
+    ("DEFINEFUNC2(X509_NAME_ENTRY *, X509_NAME_get_entry, X509_NAME *a, a, int b, b, return nullptr, return)", "DEFINEFUNC2(QT_OPENSSL4_CONST X509_NAME_ENTRY *, X509_NAME_get_entry, const X509_NAME *a, a, int b, b, return nullptr, return)", "DEFINEFUNC2(QT_OPENSSL4_CONST X509_NAME_ENTRY *, X509_NAME_get_entry, const X509_NAME *a, a, int b, b, return nullptr, return)"),
+    ("DEFINEFUNC(ASN1_STRING *, X509_NAME_ENTRY_get_data, X509_NAME_ENTRY *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST ASN1_STRING *, X509_NAME_ENTRY_get_data, const X509_NAME_ENTRY *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST ASN1_STRING *, X509_NAME_ENTRY_get_data, const X509_NAME_ENTRY *a, a, return nullptr, return)"),
+    ("DEFINEFUNC(ASN1_OBJECT *, X509_NAME_ENTRY_get_object, X509_NAME_ENTRY *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST ASN1_OBJECT *, X509_NAME_ENTRY_get_object, const X509_NAME_ENTRY *a, a, return nullptr, return)", "DEFINEFUNC(QT_OPENSSL4_CONST ASN1_OBJECT *, X509_NAME_ENTRY_get_object, const X509_NAME_ENTRY *a, a, return nullptr, return)"),
+]:
+    replace_or_accept(old_text, new_text, *accepted)
 
 path.write_text(text)
 PY
