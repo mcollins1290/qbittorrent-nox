@@ -865,11 +865,26 @@ deploy_artifact() {
   ssh "$DEPLOY_HOST" "$DEPLOY_RESTART_CMD"
 }
 
+show_remote_test_deploy_gate() {
+  if [[ "$TESTS_PASSED" == "1" ]]; then
+    printf "\n%sREMOTE TEST RESULT: PASS%s\n" "$C_GREEN" "$C_RESET"
+    printf "qBittorrent remote test suite passed on %s.\n" "$DEPLOY_HOST"
+    printf "Test summary: %s run, %s passed, %s failed, %s skipped.\n" \
+      "$TESTS_RUN_COUNT" "$TESTS_PASS_COUNT" "$TESTS_FAIL_COUNT" "$TESTS_SKIPPED_COUNT"
+    printf "Deployment is being offered because the required remote test gate passed.\n"
+  else
+    printf "\n%sREMOTE TEST RESULT: NOT RUN%s\n" "$C_YELLOW" "$C_RESET"
+    printf "If you choose deploy, qBittorrent tests will run on %s first; deployment continues only if they pass.\n" \
+      "$DEPLOY_HOST"
+  fi
+}
+
 offer_deploy_after_build() {
   local answer=""
   [[ "$DO_DEPLOY" == "0" ]] || return 0
   [[ "$ASSUME_YES" == "0" ]] || return 0
 
+  show_remote_test_deploy_gate
   printf "\nBuild completed successfully. Deploy %s/qbittorrent-nox to %s:%s and restart %s? [y/N] " \
     "$ARTIFACTS_DIR" "$DEPLOY_HOST" "$DEPLOY_DIR" "$DEPLOY_SERVICE"
   if ! read -r answer; then
@@ -879,6 +894,7 @@ offer_deploy_after_build() {
   case "$answer" in
     [Yy]|[Yy][Ee][Ss])
       if ensure_tests_passed_before_deploy; then
+        show_remote_test_deploy_gate
         deploy_artifact 0
       fi
       ;;
@@ -899,7 +915,7 @@ qbittorrent_test_names() {
 run_qbittorrent_tests_remote() {
   local build_dir="$BUILD/qbittorrent-${QBT_VER}-tests"
   local test_data_dir="$SRC/qbittorrent-${QBT_VER}/test/testdata"
-  local remote_dir="" runner="" runner_name="" status=0 remote_test_data_created=0
+  local remote_dir="" runner="" runner_name="" summary="" status=0 remote_test_data_created=0
   local -a tests=() runnable_tests=() test_paths=() skipped_tests=()
   local test path skip skip_test
 
@@ -941,11 +957,20 @@ run_qbittorrent_tests_remote() {
     printf '#!/usr/bin/env sh\n'
     printf 'set -eu\n'
     printf 'failed=0\n'
+    printf 'passed=0\n'
     for test in "${runnable_tests[@]}"; do
       printf 'printf "\\n==> %s\\n"\n' "$test"
-      printf './%s || failed=1\n' "$test"
+      # shellcheck disable=SC2016 # Variables expand later inside the generated remote runner.
+      printf 'if ./%s; then passed=$((passed + 1)); else failed=$((failed + 1)); fi\n' "$test"
     done
-    printf 'exit "$%s"\n' failed
+    # shellcheck disable=SC2016 # Variables expand later inside the generated remote runner.
+    printf 'total=$((passed + failed))\n'
+    # shellcheck disable=SC2016 # Variables expand later inside the generated remote runner.
+    printf 'printf "\\nREMOTE TEST SUMMARY: %%s run, %%s passed, %%s failed\\n" "$total" "$passed" "$failed"\n'
+    # shellcheck disable=SC2016 # Variables expand later inside the generated remote runner.
+    printf 'printf "%%s %%s %%s\\n" "$total" "$passed" "$failed" > .qbt-test-summary\n'
+    # shellcheck disable=SC2016 # Variables expand later inside the generated remote runner.
+    printf '[ "$failed" -eq 0 ]\n'
   } >"$runner"
   chmod +x "$runner"
 
@@ -976,6 +1001,21 @@ run_qbittorrent_tests_remote() {
   else
     status=$?
   fi
+  # shellcheck disable=SC2029 # remote_dir is intentionally expanded locally.
+  summary="$(ssh "$DEPLOY_HOST" "cd '$remote_dir' && cat .qbt-test-summary 2>/dev/null || true")"
+  TESTS_SKIPPED_COUNT="${#skipped_tests[@]}"
+  if [[ "$summary" =~ ^[0-9]+[[:space:]]+[0-9]+[[:space:]]+[0-9]+$ ]]; then
+    read -r TESTS_RUN_COUNT TESTS_PASS_COUNT TESTS_FAIL_COUNT <<<"$summary"
+  else
+    TESTS_RUN_COUNT="${#runnable_tests[@]}"
+    if [[ "$status" -eq 0 ]]; then
+      TESTS_PASS_COUNT="$TESTS_RUN_COUNT"
+      TESTS_FAIL_COUNT=0
+    else
+      TESTS_PASS_COUNT=0
+      TESTS_FAIL_COUNT="$TESTS_RUN_COUNT"
+    fi
+  fi
 
   msg "Remove remote test directory: ${remote_dir}"
   # shellcheck disable=SC2029 # remote_dir is intentionally expanded locally.
@@ -987,11 +1027,18 @@ run_qbittorrent_tests_remote() {
   fi
 
   if [[ "$status" -ne 0 ]]; then
+    printf "\n%sREMOTE TEST RESULT: FAIL%s\n" "$C_RED" "$C_RESET"
+    printf "qBittorrent remote test suite failed on %s.\n" "$DEPLOY_HOST"
+    printf "Test summary: %s run, %s passed, %s failed, %s skipped.\n" \
+      "$TESTS_RUN_COUNT" "$TESTS_PASS_COUNT" "$TESTS_FAIL_COUNT" "$TESTS_SKIPPED_COUNT"
     die "qBittorrent remote tests failed"
   fi
 
   TESTS_PASSED=1
-  msg "qBittorrent remote tests passed."
+  printf "\n%sREMOTE TEST RESULT: PASS%s\n" "$C_GREEN" "$C_RESET"
+  printf "qBittorrent remote test suite passed on %s.\n" "$DEPLOY_HOST"
+  printf "Test summary: %s run, %s passed, %s failed, %s skipped.\n" \
+    "$TESTS_RUN_COUNT" "$TESTS_PASS_COUNT" "$TESTS_FAIL_COUNT" "$TESTS_SKIPPED_COUNT"
 }
 
 offer_remote_tests_after_build() {
@@ -1074,6 +1121,10 @@ DO_BUILD_TESTS=0
 DO_RUN_TESTS_REMOTE=0
 TESTS_BUILT=0
 TESTS_PASSED=0
+TESTS_RUN_COUNT=0
+TESTS_PASS_COUNT=0
+TESTS_FAIL_COUNT=0
+TESTS_SKIPPED_COUNT=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
