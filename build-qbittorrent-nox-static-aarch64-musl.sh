@@ -1393,20 +1393,58 @@ dep_has_stamp() {
   [[ -f "$(stamp_file "$stamp_dir" "$dep" "$ver")" ]]
 }
 
+stamp_current_value() {
+  local dep="$1" key="$2"
+  case "$key" in
+    stamp_schema) printf '2\n' ;;
+    name) printf '%s\n' "$dep" ;;
+    version) dep_version "$dep" ;;
+    target|target_triple) printf '%s\n' "$TARGET_TRIPLE" ;;
+    script) printf '%s\n' "$SCRIPT_VERSION" ;;
+    toolchain_root) printf '%s\n' "$TOOLCHAIN_ROOT" ;;
+    sysroot) printf '%s\n' "$SYSROOT" ;;
+    toolchain_file) printf '%s\n' "$TOOLCHAIN_FILE" ;;
+    host_cc) printf '%s\n' "$HOST_CC" ;;
+    host_cxx) printf '%s\n' "$HOST_CXX" ;;
+    cflags) printf '%s\n' "$CFLAGS" ;;
+    cxxflags) printf '%s\n' "$CXXFLAGS" ;;
+    ldflags) printf '%s\n' "$LDFLAGS" ;;
+    openssl_system_dir) printf '%s\n' "$OPENSSL_SYSTEM_DIR" ;;
+    zlib_ver) printf '%s\n' "$ZLIB_VER" ;;
+    openssl_ver) printf '%s\n' "$OPENSSL_VER" ;;
+    boost_ver) printf '%s\n' "$BOOST_VER" ;;
+    libtorrent_ver) printf '%s\n' "$LT_VER" ;;
+    qt_ver) printf '%s\n' "$QT_VER" ;;
+    *) die "unknown stamp key: $key" ;;
+  esac
+}
+
+dep_stamp_required_keys() {
+  local dep="$1"
+  printf '%s\n' stamp_schema name version target script toolchain_root target_triple sysroot toolchain_file \
+    host_cc host_cxx cflags cxxflags ldflags
+  case "$dep" in
+    zlib) printf '%s\n' zlib_ver ;;
+    openssl) printf '%s\n' openssl_ver openssl_system_dir ;;
+    boost) printf '%s\n' boost_ver ;;
+    libtorrent) printf '%s\n' libtorrent_ver ;;
+    qtbase-host|qtbase-target|qttools-host|qttools-target) printf '%s\n' qt_ver ;;
+    *) die "unknown dependency for stamp keys: $dep" ;;
+  esac
+}
+
 dep_stamp_matches_identity() {
-  local dep="$1" ver stamp_dir stamp tmp
+  local dep="$1" ver stamp_dir stamp key expected actual
   ver="$(dep_version "$dep")"
   stamp_dir="$(dep_stamp_dir "$dep")"
   stamp="$(stamp_file "$stamp_dir" "$dep" "$ver")"
   [[ -f "$stamp" ]] || return 1
-  tmp="$(mktemp "${TMPDIR:-/tmp}/${SCRIPT_NAME}.stamp.XXXXXX")"
-  stamp_content "$dep" "$ver" >"$tmp"
-  if cmp -s "$tmp" "$stamp"; then
-    rm -f -- "$tmp"
-    return 0
-  fi
-  rm -f -- "$tmp"
-  return 1
+  while IFS= read -r key; do
+    expected="$(stamp_current_value "$dep" "$key")"
+    actual="$(awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; found=1; exit} END {if (!found) exit 1}' "$stamp")" || return 1
+    [[ "$actual" == "$expected" ]] || return 1
+  done < <(dep_stamp_required_keys "$dep")
+  return 0
 }
 
 dep_has_other_version_stamp() {
@@ -1473,7 +1511,7 @@ show_dependency_report() {
     label="$(dep_label "$dep")"
     ver="$(dep_version "$dep")"
     if dep_has_other_version_stamp "$dep"; then
-      status="different stamped version present; clean rebuild required"
+      status="different stamped version present; will rebuild"
     elif dep_has_files "$dep" && dep_has_stamp "$dep" && ! dep_stamp_matches_identity "$dep"; then
       status="stamp identity changed; clean rebuild required"
     elif [[ "$DO_QBT_ONLY" == "1" ]]; then
@@ -1506,8 +1544,10 @@ show_dependency_report() {
     printf "  %-22s %-8s %s\n" "$label" "$ver" "$status"
   done
 
-  if ((${#VERSION_CHANGED_DEPS[@]} > 0 || ${#STALE_STAMP_DEPS[@]} > 0)); then
-    printf "  qBittorrent-only:     not possible; dependency stamp mismatch requires clean rebuild\n"
+  if ((${#STALE_STAMP_DEPS[@]} > 0)); then
+    printf "  qBittorrent-only:     not possible; dependency stamp identity mismatch requires clean rebuild\n"
+  elif ((${#VERSION_CHANGED_DEPS[@]} > 0)); then
+    printf "  qBittorrent-only:     not possible; changed dependency versions require targeted rebuild\n"
   elif deps_all_current; then
     printf "  qBittorrent-only:     possible; prerequisites are current\n"
   else
@@ -1524,7 +1564,7 @@ deps_all_current() {
 
 deps_need_clean_rebuild() {
   collect_dependency_status
-  ((${#VERSION_CHANGED_DEPS[@]} > 0 || ${#STALE_STAMP_DEPS[@]} > 0))
+  ((${#STALE_STAMP_DEPS[@]} > 0))
 }
 
 recommended_build_mode() {
@@ -1544,7 +1584,7 @@ choose_default_build_mode() {
   default_choice="$(recommended_build_mode)"
 
   printf "\nChoose how to proceed:\n"
-  printf "  1) Quickest safe build: skip current stamped prerequisites, rebuild missing/unstamped ones, then build qBittorrent\n"
+  printf "  1) Quickest safe build: skip current stamped prerequisites, rebuild missing/changed/unstamped ones plus downstream dependents, then build qBittorrent\n"
   printf "  2) qBittorrent only: require current stamped prerequisites\n"
   printf "  3) Clean rebuild: remove build/src/out/artifacts, rebuild prerequisites, then build qBittorrent\n"
   printf "  4) Abort\n"
