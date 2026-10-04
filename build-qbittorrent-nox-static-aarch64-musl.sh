@@ -1421,7 +1421,10 @@ stamp_current_value() {
 
 dep_stamp_required_keys() {
   local dep="$1"
-  printf '%s\n' stamp_schema name version target script toolchain_root target_triple sysroot toolchain_file \
+  # Keep script= in stamps for auditability, but do not use the git commit hash
+  # as a rebuild trigger. Pins-only commits and reporting changes should not make
+  # otherwise current prerequisite builds stale.
+  printf '%s\n' stamp_schema name version target toolchain_root target_triple sysroot toolchain_file \
     host_cc host_cxx cflags cxxflags ldflags
   case "$dep" in
     zlib) printf '%s\n' zlib_ver ;;
