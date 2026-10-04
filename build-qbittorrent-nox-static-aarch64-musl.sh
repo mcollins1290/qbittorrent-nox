@@ -246,7 +246,8 @@ ${SCRIPT_NAME} ${SCRIPT_VERSION}
 
 Usage:
   $0 [--clean] [--rebuild] [--distclean] [--force-deps] [--qbittorrent-only]
-     [--check-prereqs] [--check-updates] [--update-pins] [--deploy] [--deploy-only]
+     [--check-prereqs] [--check-updates] [--update-pins] [--prune-stale] [--prune-stale-after-build]
+     [--deploy] [--deploy-only]
      [--build-tests] [--run-tests-remote] [--no-strip] [--yes] [--jobs N] [--help]
 
 Modes:
@@ -254,6 +255,9 @@ Modes:
   --check-updates       Report newer dependency releases and exit
   --check-update        Alias for --check-updates
   --update-pins         Update pinned dependency versions/sha256 values and exit
+  --prune-stale         Remove stale build/source/output dirs for unpinned versions
+  --prune-stale-after-build
+                        Remove stale build/source/output dirs after a successful build
   --deploy              Deploy artifact after a successful build and restart service
   --deploy-only         Deploy existing artifact and restart service without building
   --build-tests         Also build qBittorrent's test executables in a separate build dir
@@ -265,6 +269,7 @@ Environment:
   QBT_TAG=release-5.1.4 Build a specific qBittorrent GitHub tag
   PINS_FILE=path        Dependency pins file to read/update (default: dependency-pins.env)
   ASSUME_YES=1          Start the build without prompting
+                         Also confirms --prune-stale deletion prompts
   SKIP_EXISTING=0       Rebuild prerequisites instead of skipping current stamps
   TRUST_UNSTAMPED_DEPS=1 Treat existing unstamped prerequisite files as reusable
   DEPLOY_HOST=host      SSH host for deployment (default: mc-rpi2.duckdns.org)
@@ -319,6 +324,97 @@ distclean() {
   assert_rm_rf_safe "$DL"
   clean 0
   rm_rf_safe "$DL"
+}
+
+path_size_human() {
+  du -sh -- "$1" 2>/dev/null | awk '{print $1}'
+}
+
+is_current_prune_path() {
+  local p="$1" boost_dir
+  boost_dir="boost_${BOOST_VER//./_}"
+  case "$p" in
+    "$BUILD/libtorrent-${LT_VER}") return 0 ;;
+    "$BUILD/qbittorrent-${QBT_VER}") return 0 ;;
+    "$BUILD/qbittorrent-${QBT_VER}-tests") return 0 ;;
+    "$BUILD/qtbase-host-${QT_VER}") return 0 ;;
+    "$BUILD/qtbase-target-${QT_VER}") return 0 ;;
+    "$BUILD/qttools-host-${QT_VER}") return 0 ;;
+    "$BUILD/qttools-target-${QT_VER}") return 0 ;;
+    "$SRC/zlib-${ZLIB_VER}") return 0 ;;
+    "$SRC/openssl-${OPENSSL_VER}") return 0 ;;
+    "$SRC/${boost_dir}") return 0 ;;
+    "$SRC/libtorrent-rasterbar-${LT_VER}") return 0 ;;
+    "$SRC/qbittorrent-${QBT_VER}") return 0 ;;
+    "$SRC/qtbase-everywhere-src-${QT_VER}") return 0 ;;
+    "$SRC/qttools-everywhere-src-${QT_VER}") return 0 ;;
+    "$OUT/host-qt-${QT_VER}") return 0 ;;
+  esac
+  return 1
+}
+
+collect_stale_prune_paths() {
+  local p
+  PRUNE_STALE_PATHS=()
+
+  shopt -s nullglob
+  for p in \
+    "$BUILD"/libtorrent-* \
+    "$BUILD"/qbittorrent-* \
+    "$BUILD"/qtbase-host-* \
+    "$BUILD"/qtbase-target-* \
+    "$BUILD"/qttools-host-* \
+    "$BUILD"/qttools-target-* \
+    "$SRC"/zlib-* \
+    "$SRC"/openssl-* \
+    "$SRC"/boost_* \
+    "$SRC"/libtorrent-rasterbar-* \
+    "$SRC"/qbittorrent-* \
+    "$SRC"/qtbase-everywhere-src-* \
+    "$SRC"/qttools-everywhere-src-* \
+    "$OUT"/host-qt-*; do
+    [[ -d "$p" ]] || continue
+    is_current_prune_path "$p" && continue
+    PRUNE_STALE_PATHS+=("$p")
+  done
+  shopt -u nullglob
+}
+
+prune_stale() {
+  local p answer total_size
+  collect_stale_prune_paths
+
+  if ((${#PRUNE_STALE_PATHS[@]} == 0)); then
+    msg "No stale build/source/output directories found."
+    return 0
+  fi
+
+  msg "Stale build/source/output directories selected for pruning"
+  for p in "${PRUNE_STALE_PATHS[@]}"; do
+    printf "  %-8s %s\n" "$(path_size_human "$p")" "$p"
+  done
+
+  total_size="$(du -sch -- "${PRUNE_STALE_PATHS[@]}" 2>/dev/null | awk '/total$/ {print $1}')"
+  [[ -n "$total_size" ]] && printf "  %-8s %s\n" "$total_size" "total"
+
+  if [[ "$ASSUME_YES" != "1" ]]; then
+    printf "\nDelete these stale directories? [y/N]: "
+    if ! read -r answer; then
+      die "unable to read prune confirmation"
+    fi
+    case "$answer" in
+      [Yy]|[Yy][Ee][Ss]) ;;
+      *)
+        msg "Prune skipped."
+        return 0
+        ;;
+    esac
+  fi
+
+  for p in "${PRUNE_STALE_PATHS[@]}"; do
+    rm_rf_safe "$p"
+  done
+  msg "Prune complete."
 }
 
 sha256_check() {
@@ -1115,6 +1211,8 @@ DO_CLEAN_BEFORE_BUILD=0
 DO_CHECK_PREREQS=0
 DO_CHECK_UPDATES=0
 DO_UPDATE_PINS=0
+DO_PRUNE_STALE=0
+DO_PRUNE_STALE_AFTER_BUILD=0
 DO_DEPLOY=0
 DO_DEPLOY_ONLY=0
 DO_BUILD_TESTS=0
@@ -1136,6 +1234,8 @@ while [[ $# -gt 0 ]]; do
     --check-prereqs) DO_CHECK_PREREQS=1; shift ;;
     --check-updates|--check-update) DO_CHECK_UPDATES=1; shift ;;
     --update-pins) DO_UPDATE_PINS=1; shift ;;
+    --prune-stale) DO_PRUNE_STALE=1; shift ;;
+    --prune-stale-after-build) DO_PRUNE_STALE_AFTER_BUILD=1; shift ;;
     --deploy) DO_DEPLOY=1; shift ;;
     --deploy-only) DO_DEPLOY=1; DO_DEPLOY_ONLY=1; shift ;;
     --build-tests) DO_BUILD_TESTS=1; shift ;;
@@ -1171,6 +1271,9 @@ if [[ "$DO_DEPLOY" == "1" ]]; then
   msg "Deploy target: ${DEPLOY_HOST}:${DEPLOY_DIR}"
   msg "Deploy restart: ${DEPLOY_RESTART_CMD}"
 fi
+if [[ "$DO_PRUNE_STALE_AFTER_BUILD" == "1" ]]; then
+  msg "Prune stale after build: enabled"
+fi
 
 if [[ "$DO_CHECK_PREREQS" == "1" ]]; then
   check_prereqs
@@ -1196,6 +1299,16 @@ if [[ "$DO_UPDATE_PINS" == "1" ]]; then
   need curl
   need sha256sum
   update_pins
+  exit 0
+fi
+
+if [[ "$DO_PRUNE_STALE" == "1" ]]; then
+  need python3
+  if [[ "$QBT_VER" == "latest" || -z "$QBT_TAG" ]]; then
+    need curl
+  fi
+  resolve_qbittorrent_version
+  prune_stale
   exit 0
 fi
 
@@ -2589,5 +2702,8 @@ if [[ "$DO_DEPLOY" == "1" ]]; then
 fi
 offer_remote_tests_after_build
 offer_deploy_after_build
+if [[ "$DO_PRUNE_STALE_AFTER_BUILD" == "1" ]]; then
+  prune_stale
+fi
 
 msg "All done."
