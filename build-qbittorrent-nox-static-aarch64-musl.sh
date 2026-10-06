@@ -706,10 +706,17 @@ qbt_built_version() {
 }
 
 check_qbittorrent_update() {
-  local latest built status
+  local latest built configured status
   local color
   latest="$(latest_version_from_github_release qbittorrent/qBittorrent release- 2>/dev/null || true)"
   built="$(qbt_built_version)"
+  if [[ "$QBT_VER" == "latest" ]]; then
+    configured="${latest:-latest}"
+  elif [[ -n "$QBT_TAG" ]]; then
+    configured="${QBT_TAG#release-}"
+  else
+    configured="$QBT_VER"
+  fi
 
   if [[ -z "$latest" ]]; then
     status="check failed"
@@ -720,15 +727,15 @@ check_qbittorrent_update() {
     built="unknown"
     color="$C_RED"
   elif [[ "$built" == "$latest" ]]; then
-    status="built artifact is latest; no rebuild needed"
+    status="built version is latest; no rebuild needed"
     color="$C_GREEN"
   else
-    status="built artifact is not latest; rebuild recommended"
+    status="built version is not latest; rebuild recommended"
     color="$C_YELLOW"
   fi
 
   printf "%s  %-18s configured %-10s built %-10s latest %-12s %s%s\n" \
-    "$color" "qBittorrent" "$QBT_VER" "$built" "$latest" "$status" "$C_RESET"
+    "$color" "qBittorrent" "$configured" "$built" "$latest" "$status" "$C_RESET"
 }
 
 check_updates() {
