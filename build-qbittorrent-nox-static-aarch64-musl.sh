@@ -67,6 +67,7 @@ PINS_FILE="${PINS_FILE:-$TOP/dependency-pins.env}"
 
 DEPLOY_HOST="${DEPLOY_HOST:-mc-rpi2.duckdns.org}"
 DEPLOY_DIR="${DEPLOY_DIR:-/usr/local/bin}"
+DEPLOY_METADATA_DIR="${DEPLOY_METADATA_DIR:-/usr/local/share/qbittorrent-nox}"
 DEPLOY_SERVICE="${DEPLOY_SERVICE:-qbittorrent-nox.service}"
 DEPLOY_RESTART_CMD="${DEPLOY_RESTART_CMD:-systemctl restart ${DEPLOY_SERVICE}}"
 REMOTE_TEST_PARENT="${REMOTE_TEST_PARENT:-/tmp}"
@@ -274,6 +275,8 @@ Environment:
   TRUST_UNSTAMPED_DEPS=1 Treat existing unstamped prerequisite files as reusable
   DEPLOY_HOST=host      SSH host for deployment (default: mc-rpi2.duckdns.org)
   DEPLOY_DIR=path       Remote install directory (default: /usr/local/bin)
+  DEPLOY_METADATA_DIR=path
+                        Remote metadata directory (default: /usr/local/share/qbittorrent-nox)
   DEPLOY_SERVICE=name   Remote systemd service to restart (default: qbittorrent-nox.service)
   DEPLOY_RESTART_CMD=cmd Remote restart command (default: systemctl restart DEPLOY_SERVICE)
   REMOTE_TEST_PARENT=path Remote parent directory for test runs (default: /tmp)
@@ -925,8 +928,8 @@ confirm_deploy() {
     return 0
   fi
 
-  printf "\nDeploy %s/qbittorrent-nox to %s:%s and run '%s'? [y/N] " \
-    "$ARTIFACTS_DIR" "$DEPLOY_HOST" "$DEPLOY_DIR" "$DEPLOY_RESTART_CMD"
+  printf "\nDeploy %s/qbittorrent-nox to %s:%s, metadata to %s, and run '%s'? [y/N] " \
+    "$ARTIFACTS_DIR" "$DEPLOY_HOST" "$DEPLOY_DIR" "$DEPLOY_METADATA_DIR" "$DEPLOY_RESTART_CMD"
   if ! read -r answer; then
     die "unable to read deploy confirmation"
   fi
@@ -939,9 +942,12 @@ confirm_deploy() {
 
 deploy_artifact() {
   local artifact="$ARTIFACTS_DIR/qbittorrent-nox"
+  local metadata="$ARTIFACTS_DIR/qbittorrent-nox.build-info"
   local local_sha remote_path remote_sha
+  local metadata_local_sha metadata_remote_path metadata_remote_sha
   local require_confirm="${1:-1}"
   [[ -f "$artifact" ]] || die "artifact not found: $artifact"
+  [[ -f "$metadata" ]] || die "artifact metadata not found: $metadata"
 
   need rsync
   need ssh
@@ -952,6 +958,10 @@ deploy_artifact() {
 
   msg "Deploy: $artifact -> ${DEPLOY_HOST}:${DEPLOY_DIR}/"
   rsync -aAX "$artifact" "${DEPLOY_HOST}:${DEPLOY_DIR}/"
+  msg "Deploy metadata: $metadata -> ${DEPLOY_HOST}:${DEPLOY_METADATA_DIR}/"
+  # shellcheck disable=SC2029 # DEPLOY_METADATA_DIR is intentionally expanded locally.
+  ssh "$DEPLOY_HOST" "mkdir -p '$DEPLOY_METADATA_DIR'"
+  rsync -a "$metadata" "${DEPLOY_HOST}:${DEPLOY_METADATA_DIR}/"
 
   local_sha="$(sha256sum "$artifact" | awk '{print $1}')"
   remote_path="${DEPLOY_DIR%/}/qbittorrent-nox"
@@ -961,6 +971,16 @@ deploy_artifact() {
   [[ -n "$remote_sha" ]] || die "unable to read deployed artifact sha256: ${DEPLOY_HOST}:${remote_path}"
   if [[ "$remote_sha" != "$local_sha" ]]; then
     die "deployed artifact sha256 mismatch: local ${local_sha}, remote ${remote_sha}"
+  fi
+
+  metadata_local_sha="$(sha256sum "$metadata" | awk '{print $1}')"
+  metadata_remote_path="${DEPLOY_METADATA_DIR%/}/qbittorrent-nox.build-info"
+  msg "Verify deployed metadata sha256"
+  # shellcheck disable=SC2029 # metadata_remote_path is intentionally expanded locally.
+  metadata_remote_sha="$(ssh "$DEPLOY_HOST" "sha256sum '$metadata_remote_path' | awk '{print \$1}'")"
+  [[ -n "$metadata_remote_sha" ]] || die "unable to read deployed metadata sha256: ${DEPLOY_HOST}:${metadata_remote_path}"
+  if [[ "$metadata_remote_sha" != "$metadata_local_sha" ]]; then
+    die "deployed metadata sha256 mismatch: local ${metadata_local_sha}, remote ${metadata_remote_sha}"
   fi
 
   msg "Restart remote service: ${DEPLOY_SERVICE}"
@@ -1276,6 +1296,7 @@ if [[ "$DO_RUN_TESTS_REMOTE" == "1" ]]; then
 fi
 if [[ "$DO_DEPLOY" == "1" ]]; then
   msg "Deploy target: ${DEPLOY_HOST}:${DEPLOY_DIR}"
+  msg "Deploy metadata: ${DEPLOY_HOST}:${DEPLOY_METADATA_DIR}"
   msg "Deploy restart: ${DEPLOY_RESTART_CMD}"
 fi
 if [[ "$DO_PRUNE_STALE_AFTER_BUILD" == "1" ]]; then
