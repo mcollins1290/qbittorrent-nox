@@ -248,6 +248,7 @@ ${SCRIPT_NAME} ${SCRIPT_VERSION}
 Usage:
   $0 [--clean] [--rebuild] [--distclean] [--force-deps] [--qbittorrent-only]
      [--check-prereqs] [--check-updates] [--update-pins] [--prune-stale] [--prune-stale-after-build]
+     [--prune-unknown]
      [--deploy] [--deploy-only]
      [--build-tests] [--run-tests-remote] [--no-strip] [--yes] [--jobs N] [--help]
 
@@ -256,9 +257,11 @@ Modes:
   --check-updates       Report newer dependency releases and exit
   --check-update        Alias for --check-updates
   --update-pins         Update pinned dependency versions/sha256 values and exit
-  --prune-stale         Remove stale build/source/output dirs for unpinned versions
+  --prune-stale         Remove stale versioned dirs, downloads, temporary files, and build logs
   --prune-stale-after-build
-                        Remove stale build/source/output dirs after a successful build
+                        Remove stale content after a successful build
+  --prune-unknown       Also remove unrecognized top-level entries from build/src/out/dl/artifacts;
+                        use with --prune-stale or --prune-stale-after-build
   --deploy              Deploy artifact after a successful build and restart service
   --deploy-only         Deploy existing artifact and restart service without building
   --build-tests         Also build qBittorrent's test executables in a separate build dir
@@ -356,6 +359,39 @@ is_current_prune_path() {
   return 1
 }
 
+is_current_download_path() {
+  local p="$1"
+  case "$p" in
+    "$DL/zlib-${ZLIB_VER}.tar.xz") return 0 ;;
+    "$DL/openssl-${OPENSSL_VER}.tar.gz") return 0 ;;
+    "$DL/$(boost_archive_name "$BOOST_VER")") return 0 ;;
+    "$DL/libtorrent-rasterbar-${LT_VER}.tar.gz") return 0 ;;
+    "$DL/qbittorrent-${QBT_VER}.tar.xz") return 0 ;;
+    "$DL/qtbase-everywhere-src-${QT_VER}.tar.xz") return 0 ;;
+    "$DL/qttools-everywhere-src-${QT_VER}.tar.xz") return 0 ;;
+  esac
+  return 1
+}
+
+is_known_prune_entry() {
+  local p="$1"
+  case "$p" in
+    "$BUILD/boost-user-config.jam"|"$BUILD"/*.log)
+      [[ -f "$p" || -L "$p" ]] && return 0
+      ;;
+    "$BUILD"/libtorrent-*|"$BUILD"/qbittorrent-*|"$BUILD"/qtbase-host-*|"$BUILD"/qtbase-target-*|"$BUILD"/qttools-host-*|"$BUILD"/qttools-target-* \
+      |"$SRC"/zlib-*|"$SRC"/openssl-*|"$SRC"/boost_*|"$SRC"/libtorrent-rasterbar-*|"$SRC"/qbittorrent-*|"$SRC"/qtbase-everywhere-src-*|"$SRC"/qttools-everywhere-src-* \
+      |"$OUT/${TARGET_TRIPLE}"|"$OUT"/host-qt-*)
+      [[ -d "$p" && ! -L "$p" ]] && return 0
+      ;;
+    "$DL"/zlib-*.tar.xz|"$DL"/openssl-*.tar.gz|"$DL"/boost_*.tar.gz|"$DL"/libtorrent-rasterbar-*.tar.gz|"$DL"/qbittorrent-*.tar.xz|"$DL"/qtbase-everywhere-src-*.tar.xz|"$DL"/qttools-everywhere-src-*.tar.xz|"$DL"/*.tmp.* \
+      |"$ARTIFACTS_DIR/qbittorrent-nox"|"$ARTIFACTS_DIR/qbittorrent-nox.build-info")
+      [[ -f "$p" || -L "$p" ]] && return 0
+      ;;
+  esac
+  return 1
+}
+
 collect_stale_prune_paths() {
   local p
   PRUNE_STALE_PATHS=()
@@ -380,28 +416,80 @@ collect_stale_prune_paths() {
     is_current_prune_path "$p" && continue
     PRUNE_STALE_PATHS+=("$p")
   done
+
+  for p in \
+    "$DL"/zlib-*.tar.xz \
+    "$DL"/openssl-*.tar.gz \
+    "$DL"/boost_*.tar.gz \
+    "$DL"/libtorrent-rasterbar-*.tar.gz \
+    "$DL"/qbittorrent-*.tar.xz \
+    "$DL"/qtbase-everywhere-src-*.tar.xz \
+    "$DL"/qttools-everywhere-src-*.tar.xz; do
+    [[ -f "$p" ]] || continue
+    is_current_download_path "$p" && continue
+    PRUNE_STALE_PATHS+=("$p")
+  done
+
+  for p in "$DL"/*.tmp.* "$BUILD"/*.log; do
+    [[ -e "$p" || -L "$p" ]] || continue
+    PRUNE_STALE_PATHS+=("$p")
+  done
   shopt -u nullglob
+}
+
+collect_unknown_prune_paths() {
+  local root p
+  PRUNE_UNKNOWN_PATHS=()
+
+  shopt -s nullglob dotglob
+  for root in "$BUILD" "$SRC" "$OUT" "$DL" "$ARTIFACTS_DIR"; do
+    [[ -d "$root" ]] || continue
+    for p in "$root"/*; do
+      [[ -e "$p" || -L "$p" ]] || continue
+      is_known_prune_entry "$p" && continue
+      PRUNE_UNKNOWN_PATHS+=("$p")
+    done
+  done
+  shopt -u nullglob dotglob
 }
 
 prune_stale() {
   local p answer total_size
+  local -a selected_paths=()
   collect_stale_prune_paths
+  collect_unknown_prune_paths
 
-  if ((${#PRUNE_STALE_PATHS[@]} == 0)); then
-    msg "No stale build/source/output directories found."
+  if ((${#PRUNE_STALE_PATHS[@]} > 0)); then
+    msg "Known stale content selected for pruning"
+    for p in "${PRUNE_STALE_PATHS[@]}"; do
+      printf "  %-8s %s\n" "$(path_size_human "$p")" "$p"
+    done
+    selected_paths+=("${PRUNE_STALE_PATHS[@]}")
+  else
+    msg "No known stale content found."
+  fi
+
+  if ((${#PRUNE_UNKNOWN_PATHS[@]} > 0)); then
+    if [[ "$DO_PRUNE_UNKNOWN" == "1" ]]; then
+      msg "Unknown top-level entries explicitly selected for pruning"
+      selected_paths+=("${PRUNE_UNKNOWN_PATHS[@]}")
+    else
+      msg "Unknown top-level entries found (report only; use --prune-unknown to include)"
+    fi
+    for p in "${PRUNE_UNKNOWN_PATHS[@]}"; do
+      printf "  %-8s %s\n" "$(path_size_human "$p")" "$p"
+    done
+  fi
+
+  if ((${#selected_paths[@]} == 0)); then
     return 0
   fi
 
-  msg "Stale build/source/output directories selected for pruning"
-  for p in "${PRUNE_STALE_PATHS[@]}"; do
-    printf "  %-8s %s\n" "$(path_size_human "$p")" "$p"
-  done
-
-  total_size="$(du -sch -- "${PRUNE_STALE_PATHS[@]}" 2>/dev/null | awk '/total$/ {print $1}')"
+  total_size="$(du -sch -- "${selected_paths[@]}" 2>/dev/null | awk '/total$/ {print $1}')"
   [[ -n "$total_size" ]] && printf "  %-8s %s\n" "$total_size" "total"
 
   if [[ "$ASSUME_YES" != "1" ]]; then
-    printf "\nDelete these stale directories? [y/N]: "
+    printf "\nDelete this selected content? [y/N]: "
     if ! read -r answer; then
       die "unable to read prune confirmation"
     fi
@@ -414,7 +502,7 @@ prune_stale() {
     esac
   fi
 
-  for p in "${PRUNE_STALE_PATHS[@]}"; do
+  for p in "${selected_paths[@]}"; do
     rm_rf_safe "$p"
   done
   msg "Prune complete."
@@ -1240,6 +1328,7 @@ DO_CHECK_UPDATES=0
 DO_UPDATE_PINS=0
 DO_PRUNE_STALE=0
 DO_PRUNE_STALE_AFTER_BUILD=0
+DO_PRUNE_UNKNOWN=0
 DO_DEPLOY=0
 DO_DEPLOY_ONLY=0
 DO_BUILD_TESTS=0
@@ -1263,6 +1352,7 @@ while [[ $# -gt 0 ]]; do
     --update-pins) DO_UPDATE_PINS=1; shift ;;
     --prune-stale) DO_PRUNE_STALE=1; shift ;;
     --prune-stale-after-build) DO_PRUNE_STALE_AFTER_BUILD=1; shift ;;
+    --prune-unknown) DO_PRUNE_UNKNOWN=1; shift ;;
     --deploy) DO_DEPLOY=1; shift ;;
     --deploy-only) DO_DEPLOY=1; DO_DEPLOY_ONLY=1; shift ;;
     --build-tests) DO_BUILD_TESTS=1; shift ;;
@@ -1277,6 +1367,9 @@ done
 
 if [[ "$DO_REBUILD" == "1" ]]; then DO_CLEAN=1; fi
 [[ "$JOBS" =~ ^[1-9][0-9]*$ ]] || die "--jobs must be a positive integer"
+if [[ "$DO_PRUNE_UNKNOWN" == "1" && "$DO_PRUNE_STALE" != "1" && "$DO_PRUNE_STALE_AFTER_BUILD" != "1" ]]; then
+  die "--prune-unknown requires --prune-stale or --prune-stale-after-build"
+fi
 
 msg "${SCRIPT_NAME} ${SCRIPT_VERSION}"
 msg "Host: $(uname -a)"
@@ -1301,6 +1394,9 @@ if [[ "$DO_DEPLOY" == "1" ]]; then
 fi
 if [[ "$DO_PRUNE_STALE_AFTER_BUILD" == "1" ]]; then
   msg "Prune stale after build: enabled"
+fi
+if [[ "$DO_PRUNE_UNKNOWN" == "1" ]]; then
+  msg "Prune unknown top-level entries: enabled"
 fi
 
 if [[ "$DO_CHECK_PREREQS" == "1" ]]; then
