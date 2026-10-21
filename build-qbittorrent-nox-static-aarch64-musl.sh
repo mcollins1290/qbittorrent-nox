@@ -70,7 +70,7 @@ DEPLOY_DIR="${DEPLOY_DIR:-/usr/local/bin}"
 DEPLOY_METADATA_DIR="${DEPLOY_METADATA_DIR:-/usr/local/share/qbittorrent-nox}"
 DEPLOY_SERVICE="${DEPLOY_SERVICE:-qbittorrent-nox.service}"
 DEPLOY_RESTART_CMD="${DEPLOY_RESTART_CMD:-systemctl restart ${DEPLOY_SERVICE}}"
-REMOTE_TEST_PARENT="${REMOTE_TEST_PARENT:-/tmp}"
+REMOTE_TEST_PARENT="${REMOTE_TEST_PARENT:-/var/tmp}"
 REMOTE_TEST_SKIP="${REMOTE_TEST_SKIP:-testutilscompare}"
 
 JOBS="${JOBS:-$(nproc)}"
@@ -282,7 +282,7 @@ Environment:
                         Remote metadata directory (default: /usr/local/share/qbittorrent-nox)
   DEPLOY_SERVICE=name   Remote systemd service to restart (default: qbittorrent-nox.service)
   DEPLOY_RESTART_CMD=cmd Remote restart command (default: systemctl restart DEPLOY_SERVICE)
-  REMOTE_TEST_PARENT=path Remote parent directory for test runs (default: /tmp)
+  REMOTE_TEST_PARENT=path Remote parent directory for test runs (default: /var/tmp)
   REMOTE_TEST_SKIP=list Space-separated remote tests to skip (default: testutilscompare)
 EOF
 }
