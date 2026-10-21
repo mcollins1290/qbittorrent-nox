@@ -2392,6 +2392,18 @@ header_path = Path(sys.argv[2])
 cpp = cpp_path.read_text()
 header = header_path.read_text()
 
+# qBittorrent 5.3 and newer natively support libtorrent 2.1's storage API.
+# Do not rewrite the older implementation into sources that already use the
+# renamed_files and filenames abstractions correctly.
+native_cpp_markers = [
+    ".renamedFiles = storageParams.renamed_files",
+    "const lt::filenames fileNames",
+    "renamedFiles.rename_file",
+]
+if all(marker in cpp for marker in native_cpp_markers) and "lt::renamed_files renamedFiles;" in header:
+    print("qBittorrent source already supports the libtorrent 2.1 storage API; patch not needed")
+    sys.exit(0)
+
 old = '''\
 #include <libtorrent/fwd.hpp>
 '''
